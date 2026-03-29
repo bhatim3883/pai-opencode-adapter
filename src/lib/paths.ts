@@ -72,10 +72,12 @@ export function getAdapterPath(...segments: string[]): string {
 
 /**
  * Get a path relative to MEMORY directory
- * Uses adapter's MEMORY directory
+ * Uses the PAI directory (~/.claude/MEMORY) as the single source of truth.
+ * PRDs, learning signals, work summaries, and state all live here.
+ * The adapter dir (~/.opencode) is only for plugin config and registration.
  */
 export function getMemoryPath(...segments: string[]): string {
-  return getAdapterPath("MEMORY", ...segments);
+  return getPAIPath("MEMORY", ...segments);
 }
 
 /**

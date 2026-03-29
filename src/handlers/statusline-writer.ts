@@ -266,23 +266,27 @@ export function getActiveSessionId(): string | null {
 
 /**
  * Sync status from the latest PRD file.
- * Reads the most recently modified PRD, extracts frontmatter fields
- * (phase, effort, progress, task) and ISC criteria counts, then merges
- * them into the in-memory status and writes to disk.
+ * Reads the most recently modified PRD from the PAI directory
+ * (~/.claude/MEMORY/WORK/), extracts frontmatter fields (phase, effort,
+ * progress, task) and ISC criteria counts, then merges them into the
+ * in-memory status and writes to disk.
  *
- * Called periodically (e.g. on tool.execute.after) to keep the tmux
- * status bar in sync with Algorithm state without requiring the AI
- * to explicitly call onPhaseChange with Algorithm phases.
+ * Note: We look in the PAI directory (not the adapter's MEMORY/WORK)
+ * because PRDs are written by the AI into ~/.claude/MEMORY/WORK/{slug}/.
+ *
+ * Called on every tool.execute.after to keep the tmux status bar in sync
+ * with Algorithm state.
  */
 export function syncFromPRD(sessionId: string): void {
   const sid = sessionId || activeSessionId;
   if (!sid) return;
 
   try {
-    const prdPath = findLatestPRD();
-    if (!prdPath) return;
+    // findLatestPRD() scans ~/.claude/MEMORY/WORK/ for the most recent PRD
+    const latestPath = findLatestPRD();
+    if (!latestPath) return;
 
-    const prd = readPRD(prdPath);
+    const prd = readPRD(latestPath);
     if (!prd) return;
 
     const fm = prd.frontmatter;
