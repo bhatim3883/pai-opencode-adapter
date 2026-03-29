@@ -1,4 +1,7 @@
-import { expect, test, describe } from "bun:test";
+import { expect, test, describe, beforeAll, afterAll } from "bun:test";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { parseAgentDefinition, generateAgentsMD } from "../generators/build-agents-md.js";
 
 describe("build-agents-md", () => {
@@ -46,35 +49,75 @@ Content`;
     expect(result.skills).toBeUndefined();
   });
 
+  // --- generateAgentsMD tests using temp fixture directory ---
+
+  let fixtureDir: string;
+
+  beforeAll(() => {
+    fixtureDir = mkdtempSync(join(tmpdir(), "pai-agents-test-"));
+    const agentsDir = join(fixtureDir, "agents");
+    mkdirSync(agentsDir);
+
+    writeFileSync(join(agentsDir, "Alpha.md"), `---
+name: Alpha
+description: First test agent for CI validation
+skills:
+  - Planning
+  - Analysis
+---
+
+# Alpha Agent
+Alpha does planning and analysis.
+`);
+
+    writeFileSync(join(agentsDir, "Bravo.md"), `---
+name: Bravo
+description: Second test agent for CI validation
+skills:
+  - Execution
+---
+
+# Bravo Agent
+Bravo handles execution tasks.
+`);
+
+    writeFileSync(join(agentsDir, "Charlie.md"), `---
+name: Charlie
+description: Third test agent for CI validation
+---
+
+# Charlie Agent
+Charlie has no skills listed.
+`);
+  });
+
+  afterAll(() => {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  });
+
   test("generateAgentsMD returns non-empty markdown", async () => {
-    const result = await generateAgentsMD(`${process.env.HOME}/.claude`);
+    const result = await generateAgentsMD(fixtureDir);
     expect(result.length).toBeGreaterThan(0);
   });
 
   test("generateAgentsMD output starts with # heading", async () => {
-    const result = await generateAgentsMD(`${process.env.HOME}/.claude`);
+    const result = await generateAgentsMD(fixtureDir);
     expect(result).toMatch(/^# Agents/);
   });
 
-  test("generateAgentsMD contains at least 5 agent names", async () => {
-    const result = await generateAgentsMD(`${process.env.HOME}/.claude`);
+  test("generateAgentsMD contains fixture agent names", async () => {
+    const result = await generateAgentsMD(fixtureDir);
     
-    const expectedAgents = ["Algorithm", "Architect", "Artist", "Engineer", "Pentester"];
-    let foundCount = 0;
-    
-    for (const agentName of expectedAgents) {
-      if (result.includes(`## ${agentName}`)) {
-        foundCount++;
-      }
-    }
-    
-    expect(foundCount).toBeGreaterThanOrEqual(5);
+    expect(result).toContain("## Alpha");
+    expect(result).toContain("## Bravo");
+    expect(result).toContain("## Charlie");
   });
 
   test("generateAgentsMD includes agent descriptions", async () => {
-    const result = await generateAgentsMD(`${process.env.HOME}/.claude`);
+    const result = await generateAgentsMD(fixtureDir);
     
-    expect(result).toMatch(/## Engineer\s*\n\s*Elite|Engineer/);
+    expect(result).toContain("First test agent for CI validation");
+    expect(result).toContain("Second test agent for CI validation");
   });
 
   test("generateAgentsMD throws on invalid directory", async () => {
