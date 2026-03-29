@@ -36,6 +36,11 @@ describe("path-mapper", () => {
     expect(result).toMatch(/\/\.claude\/agents$/);
   });
 
+  test("PATHS.PAI_AGENTS_NEW returns new skills/Agents path", () => {
+    const result = PATHS.PAI_AGENTS_NEW();
+    expect(result).toMatch(/\/\.claude\/skills\/Agents$/);
+  });
+
   test("PATHS.PAI_TELOS uses PAI/USER/TELOS not PAI/TELOS", () => {
     const result = PATHS.PAI_TELOS();
     expect(result).toContain("/.claude/PAI/USER/TELOS");

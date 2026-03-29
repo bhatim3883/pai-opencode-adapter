@@ -27,6 +27,7 @@ import {
   PAI_DIR,
   PAI_HOOKS_DIR,
   PAI_AGENTS_DIR,
+  PAI_AGENTS_NEW_DIR,
   PAI_TELOS_DIR,
   PAI_ALGORITHM_DIR,
   PAI_MEMORY_DIR,
@@ -161,6 +162,7 @@ describe("Constants - Path Safety", () => {
       PAI_DIR,
       PAI_HOOKS_DIR,
       PAI_AGENTS_DIR,
+      PAI_AGENTS_NEW_DIR,
       PAI_TELOS_DIR,
       PAI_ALGORITHM_DIR,
       PAI_MEMORY_DIR,
@@ -198,6 +200,11 @@ describe("Constants - Path Safety", () => {
   test("PAI agents path is correct (~/.claude/agents/)", () => {
     const home = process.env.HOME || "~";
     expect(PAI_AGENTS_DIR).toBe(path.join(home, ".claude", "agents"));
+  });
+
+  test("PAI agents new path is correct (~/.claude/skills/Agents/)", () => {
+    const home = process.env.HOME || "~";
+    expect(PAI_AGENTS_NEW_DIR).toBe(path.join(home, ".claude", "skills", "Agents"));
   });
 
   test("PAI TELOS path is correct (~/.claude/PAI/USER/TELOS/)", () => {
@@ -337,6 +344,7 @@ describe("Integration", () => {
     const allPaths = [
       PAI_HOOKS_DIR,
       PAI_AGENTS_DIR,
+      PAI_AGENTS_NEW_DIR,
       PAI_TELOS_DIR,
       PAI_ALGORITHM_DIR,
       PAI_MEMORY_DIR,

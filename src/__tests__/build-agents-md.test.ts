@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { parseAgentDefinition, generateAgentsMD } from "../generators/build-agents-md.js";
 
 describe("build-agents-md", () => {
+  // ---- Legacy YAML frontmatter format tests ----
+
   const sampleAgentContent = `---
 name: TestAgent
 description: A test agent for verification
@@ -49,7 +51,46 @@ Content`;
     expect(result.skills).toBeUndefined();
   });
 
-  // --- generateAgentsMD tests using temp fixture directory ---
+  // ---- New markdown context format tests ----
+
+  const newFormatContent = `# Architect Agent Context
+
+**Role**: Software architecture specialist with deep knowledge of PAI's constitutional principles.
+
+**Model**: opus
+
+---
+
+## PAI Mission
+
+You are an agent within PAI.
+`;
+
+  test("parseAgentDefinition extracts name from new format heading", () => {
+    const result = parseAgentDefinition(newFormatContent, "ArchitectContext.md");
+    expect(result.name).toBe("Architect");
+  });
+
+  test("parseAgentDefinition extracts description from new format Role field", () => {
+    const result = parseAgentDefinition(newFormatContent, "ArchitectContext.md");
+    expect(result.description).toBe(
+      "Software architecture specialist with deep knowledge of PAI's constitutional principles."
+    );
+  });
+
+  test("parseAgentDefinition falls back to filename when no heading match", () => {
+    const noHeading = "Some content without a proper heading\n**Role**: A role";
+    const result = parseAgentDefinition(noHeading, "CustomAgentContext.md");
+    expect(result.name).toBe("CustomAgent");
+  });
+
+  test("parseAgentDefinition falls back to description when no Role field", () => {
+    const noRole = "# Test Agent Context\n\nNo role here.";
+    const result = parseAgentDefinition(noRole, "TestContext.md");
+    expect(result.description).toBe("No description available");
+  });
+
+  // --- generateAgentsMD tests using temp fixture directory (legacy format) ---
 
   let fixtureDir: string;
 
@@ -127,5 +168,66 @@ Charlie has no skills listed.
     } catch (error) {
       expect((error as Error).message).toContain("Failed to read agents directory");
     }
+  });
+
+  // --- generateAgentsMD tests using new format fixtures ---
+
+  let newFixtureDir: string;
+
+  beforeAll(() => {
+    newFixtureDir = mkdtempSync(join(tmpdir(), "pai-agents-new-test-"));
+    const skillsAgentsDir = join(newFixtureDir, "skills", "Agents");
+    mkdirSync(skillsAgentsDir, { recursive: true });
+
+    writeFileSync(join(skillsAgentsDir, "ArchitectContext.md"), `# Architect Agent Context
+
+**Role**: Software architecture specialist for testing.
+
+**Model**: opus
+
+---
+
+## PAI Mission
+
+Test content.
+`);
+
+    writeFileSync(join(skillsAgentsDir, "EngineerContext.md"), `# Engineer Agent Context
+
+**Role**: Senior engineering leader for testing.
+
+**Model**: opus
+
+---
+
+## PAI Mission
+
+Test content.
+`);
+
+    // Non-context files should be ignored
+    writeFileSync(join(skillsAgentsDir, "SKILL.md"), "# Agents Skill\nNot an agent.");
+  });
+
+  afterAll(() => {
+    rmSync(newFixtureDir, { recursive: true, force: true });
+  });
+
+  test("generateAgentsMD reads from new skills/Agents path", async () => {
+    const result = await generateAgentsMD(newFixtureDir);
+    expect(result).toContain("## Architect");
+    expect(result).toContain("## Engineer");
+  });
+
+  test("generateAgentsMD extracts descriptions from new format", async () => {
+    const result = await generateAgentsMD(newFixtureDir);
+    expect(result).toContain("Software architecture specialist for testing.");
+    expect(result).toContain("Senior engineering leader for testing.");
+  });
+
+  test("generateAgentsMD ignores non-Context.md files in new path", async () => {
+    const result = await generateAgentsMD(newFixtureDir);
+    expect(result).not.toContain("Agents Skill");
+    expect(result).toContain("Total: 2 agents");
   });
 });

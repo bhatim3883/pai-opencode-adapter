@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 export const PATHS = {
   PAI_ROOT: () => join(process.env.HOME!, ".claude"),
   PAI_AGENTS: () => join(process.env.HOME!, ".claude", "agents"),
+  PAI_AGENTS_NEW: () => join(process.env.HOME!, ".claude", "skills", "Agents"),
   PAI_HOOKS: () => join(process.env.HOME!, ".claude", "hooks"),
   PAI_TELOS: () => join(process.env.HOME!, ".claude", "PAI", "USER", "TELOS"),
   PAI_ALGORITHM: () => join(process.env.HOME!, ".claude", "PAI", "Algorithm"),

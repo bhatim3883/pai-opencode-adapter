@@ -26,9 +26,18 @@ export const PAI_HOOKS_DIR = path.join(PAI_DIR, "hooks");
 
 /**
  * PAI agents directory (~/.claude/agents/)
- * Note: NOT ~/.claude/PAI/agents/ - this is the correct path
+ * Legacy path — PAI previously stored agent definitions here with YAML frontmatter.
+ * Note: NOT ~/.claude/PAI/agents/ - this is the correct legacy path
  */
 export const PAI_AGENTS_DIR = path.join(PAI_DIR, "agents");
+
+/**
+ * PAI agents directory — new format (~/.claude/skills/Agents/)
+ * Current PAI stores agent context files here (e.g., ArchitectContext.md).
+ * These use markdown headings + **Role**: format instead of YAML frontmatter.
+ * The adapter checks this path first, falling back to PAI_AGENTS_DIR.
+ */
+export const PAI_AGENTS_NEW_DIR = path.join(PAI_DIR, "skills", "Agents");
 
 /**
  * PAI TELOS directory (~/.claude/PAI/USER/TELOS/)
