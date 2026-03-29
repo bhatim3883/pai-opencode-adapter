@@ -46,6 +46,18 @@ export const PAI_AGENTS_NEW_DIR = path.join(PAI_DIR, "skills", "Agents");
 export const PAI_TELOS_DIR = path.join(PAI_DIR, "PAI", "USER", "TELOS");
 
 /**
+ * PAI upstream repo clone (~/.claude/Personal_AI_Infrastructure/)
+ * Used by the upgrade command to fetch/pull/diff against upstream PAI.
+ */
+export const PAI_REPO_DIR = path.join(PAI_DIR, "Personal_AI_Infrastructure");
+
+/**
+ * PAI core directory (~/.claude/PAI/)
+ * Contains Algorithm, USER, CONTEXT_ROUTING, etc.
+ */
+export const PAI_CORE_DIR = path.join(PAI_DIR, "PAI");
+
+/**
  * PAI algorithm directory (~/.claude/PAI/Algorithm/)
  */
 export const PAI_ALGORITHM_DIR = path.join(PAI_DIR, "PAI", "Algorithm");

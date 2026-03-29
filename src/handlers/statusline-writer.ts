@@ -290,6 +290,13 @@ export function syncFromPRD(sessionId: string): void {
     if (!prd) return;
 
     const fm = prd.frontmatter;
+    const phase = (fm.phase ?? "") as string;
+
+    // Skip completed/cancelled PRDs — they're not active work
+    if (phase.toLowerCase() === "complete" || phase.toLowerCase() === "cancelled") {
+      return;
+    }
+
     const criteria = countCriteria(prd.content);
 
     let status = sessionStatus.get(sid);
@@ -301,7 +308,6 @@ export function syncFromPRD(sessionId: string): void {
     // Map PRD frontmatter to status fields
     // PRD uses both 'task' and 'title' keys
     const task = (fm.task ?? fm.title ?? "") as string;
-    const phase = (fm.phase ?? "") as string;
     const effort = (fm.effort_level ?? fm.effort ?? "") as string;
 
     if (task) status.taskDescription = task;

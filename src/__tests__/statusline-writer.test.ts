@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   onSessionStart,
   onMessageReceived,
@@ -287,6 +289,138 @@ describe("statusline-writer", () => {
 
     it("does not throw with empty session ID", () => {
       expect(() => syncFromPRD("")).not.toThrow();
+    });
+  });
+
+  describe("syncFromPRD skips completed PRDs", () => {
+    let tmpPAIDir: string;
+    let origPAIDir: string | undefined;
+
+    beforeEach(() => {
+      // Create a temp PAI directory with a MEMORY/WORK structure
+      tmpPAIDir = join(tmpdir(), `pai-test-prd-skip-${Date.now()}`);
+      mkdirSync(join(tmpPAIDir, "MEMORY", "WORK", "20260329-120000_completed-task"), { recursive: true });
+
+      // Save and override PAI_DIR
+      origPAIDir = process.env.PAI_DIR;
+      process.env.PAI_DIR = tmpPAIDir;
+    });
+
+    afterEach(() => {
+      // Restore PAI_DIR
+      if (origPAIDir !== undefined) {
+        process.env.PAI_DIR = origPAIDir;
+      } else {
+        delete process.env.PAI_DIR;
+      }
+      // Clean up temp dir
+      try { rmSync(tmpPAIDir, { recursive: true, force: true }); } catch {}
+    });
+
+    it("does not update status fields when PRD phase is complete", () => {
+      const prdContent = [
+        "---",
+        "task: Auto-allow claude access and bump to v0.2.0",
+        "slug: 20260329-120000_completed-task",
+        "effort: standard",
+        "phase: complete",
+        "progress: 10/10",
+        "mode: interactive",
+        "started: 2026-03-29T12:00:00Z",
+        "updated: 2026-03-29T12:30:00Z",
+        "---",
+        "",
+        "## Criteria",
+        "- [x] ISC-1: Something done",
+        "- [x] ISC-2: Something else done",
+      ].join("\n");
+
+      writeFileSync(
+        join(tmpPAIDir, "MEMORY", "WORK", "20260329-120000_completed-task", "PRD.md"),
+        prdContent,
+      );
+
+      onSessionStart(TEST_SESSION);
+      syncFromPRD(TEST_SESSION);
+
+      const status = getStatus(TEST_SESSION);
+      // Status should NOT have been updated from the completed PRD
+      expect(status?.taskDescription).toBe("");
+      expect(status?.algorithmPhase).toBe("");
+      expect(status?.effortLevel).toBe("");
+      expect(status?.iscProgress).toEqual({ checked: 0, total: 0 });
+    });
+
+    it("does not update status fields when PRD phase is cancelled", () => {
+      const prdContent = [
+        "---",
+        "task: Cancelled task",
+        "slug: 20260329-120000_completed-task",
+        "effort: extended",
+        "phase: cancelled",
+        "progress: 3/8",
+        "mode: interactive",
+        "started: 2026-03-29T12:00:00Z",
+        "updated: 2026-03-29T12:30:00Z",
+        "---",
+        "",
+        "## Criteria",
+        "- [x] ISC-1: Done",
+        "- [ ] ISC-2: Not done",
+      ].join("\n");
+
+      writeFileSync(
+        join(tmpPAIDir, "MEMORY", "WORK", "20260329-120000_completed-task", "PRD.md"),
+        prdContent,
+      );
+
+      onSessionStart(TEST_SESSION);
+      syncFromPRD(TEST_SESSION);
+
+      const status = getStatus(TEST_SESSION);
+      expect(status?.taskDescription).toBe("");
+      expect(status?.algorithmPhase).toBe("");
+    });
+
+    it("updates status fields when PRD phase is active (e.g. execute)", () => {
+      const prdContent = [
+        "---",
+        "task: Build new feature",
+        "slug: 20260329-120000_completed-task",
+        "effort: standard",
+        "phase: execute",
+        "progress: 3/8",
+        "mode: interactive",
+        "started: 2026-03-29T12:00:00Z",
+        "updated: 2026-03-29T12:30:00Z",
+        "---",
+        "",
+        "## Criteria",
+        "- [x] ISC-1: Done",
+        "- [x] ISC-2: Done",
+        "- [x] ISC-3: Done",
+        "- [ ] ISC-4: Not done",
+        "- [ ] ISC-5: Not done",
+        "- [ ] ISC-6: Not done",
+        "- [ ] ISC-7: Not done",
+        "- [ ] ISC-8: Not done",
+        "",
+      ].join("\n");
+
+      writeFileSync(
+        join(tmpPAIDir, "MEMORY", "WORK", "20260329-120000_completed-task", "PRD.md"),
+        prdContent,
+      );
+
+      onSessionStart(TEST_SESSION);
+      syncFromPRD(TEST_SESSION);
+
+      const status = getStatus(TEST_SESSION);
+      // Status SHOULD have been updated from the active PRD
+      expect(status?.taskDescription).toBe("Build new feature");
+      expect(status?.algorithmPhase).toBe("EXECUTE");
+      expect(status?.effortLevel).toBe("STANDARD");
+      expect(status?.iscProgress).toEqual({ checked: 3, total: 8 });
     });
   });
 });
