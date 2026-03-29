@@ -193,6 +193,37 @@ function loadMemoryContext(paiDir: string): string | null {
 }
 
 /**
+ * Load domain wisdom frames from MEMORY/WISDOM/ directory.
+ * Returns concatenated wisdom files, or null if none exist.
+ */
+function loadWisdomContext(paiDir: string): string | null {
+  const wisdomDir = join(paiDir, "MEMORY", "WISDOM");
+  if (!existsSync(wisdomDir)) {
+    return null;
+  }
+
+  let files: string[];
+  try {
+    files = readdirSync(wisdomDir)
+      .filter((f) => f.endsWith(".md"))
+      .sort();
+  } catch {
+    return null;
+  }
+
+  const parts: string[] = [];
+  for (const file of files) {
+    const content = safeRead(join(wisdomDir, file));
+    if (content) {
+      parts.push(`### ${file}\n\n${content}`);
+    }
+  }
+
+  if (parts.length === 0) return null;
+  return `## Domain Wisdom\n\n${parts.join("\n\n---\n\n")}`;
+}
+
+/**
  * Load user preferences / identity context.
  */
 function loadUserPreferences(paiDir: string): string | null {
@@ -225,6 +256,7 @@ function buildContextSections(paiDir: string): string[] {
     ["algorithm", () => loadAlgorithmContext(paiDir)],
     ["telos", () => loadTelosContext(paiDir)],
     ["memory", () => loadMemoryContext(paiDir)],
+    ["wisdom", () => loadWisdomContext(paiDir)],
     ["preferences", () => loadUserPreferences(paiDir)],
   ];
 

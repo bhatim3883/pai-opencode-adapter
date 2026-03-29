@@ -188,3 +188,81 @@ describe("contextLoaderHandler", () => {
     // output.system may be empty but handler must not crash
   });
 });
+
+describe("WISDOM context loading", () => {
+  let mockPAIDir: string;
+
+  beforeEach(() => {
+    mockPAIDir = createMockPAIDir();
+    process.env.PAI_DIR = mockPAIDir;
+    const cache = getContextCacheForTest();
+    cache.clear();
+  });
+
+  test("loads WISDOM content when wisdom files exist", () => {
+    const wisdomDir = join(mockPAIDir, "MEMORY", "WISDOM");
+    mkdirSync(wisdomDir, { recursive: true });
+    writeFileSync(
+      join(wisdomDir, "architecture.md"),
+      "# Architecture Wisdom\n\nSome wisdom here"
+    );
+
+    const { sections } = buildContextForTest(mockPAIDir);
+    const combined = sections.join("\n");
+
+    expect(combined).toContain("Domain Wisdom");
+    expect(combined).toContain("architecture.md");
+
+    cleanupDir(mockPAIDir);
+  });
+
+  test("handles empty WISDOM directory gracefully", () => {
+    const wisdomDir = join(mockPAIDir, "MEMORY", "WISDOM");
+    mkdirSync(wisdomDir, { recursive: true });
+    // No files written — directory is empty
+
+    const { sections } = buildContextForTest(mockPAIDir);
+    const combined = sections.join("\n");
+
+    expect(combined).not.toContain("Domain Wisdom");
+
+    cleanupDir(mockPAIDir);
+  });
+
+  test("handles missing WISDOM directory gracefully", () => {
+    // WISDOM directory is never created in this test
+    let result: ReturnType<typeof buildContextForTest> | undefined;
+    expect(() => {
+      result = buildContextForTest(mockPAIDir);
+    }).not.toThrow();
+
+    expect(result).toBeDefined();
+
+    cleanupDir(mockPAIDir);
+  });
+
+  test("WISDOM appears after memory in section order", () => {
+    const wisdomDir = join(mockPAIDir, "MEMORY", "WISDOM");
+    mkdirSync(wisdomDir, { recursive: true });
+    writeFileSync(
+      join(wisdomDir, "frames.md"),
+      "# Mental Frames\n\nWisdom content here"
+    );
+
+    const { sections } = buildContextForTest(mockPAIDir);
+    const combined = sections.join("\n");
+
+    const memoryIdx = combined.indexOf("Memory Context");
+    const wisdomIdx = combined.indexOf("Domain Wisdom");
+
+    // Wisdom must appear after Memory (if memory is present)
+    if (memoryIdx >= 0) {
+      expect(wisdomIdx).toBeGreaterThan(memoryIdx);
+    } else {
+      // If no memory section, wisdom should still be present
+      expect(wisdomIdx).toBeGreaterThanOrEqual(0);
+    }
+
+    cleanupDir(mockPAIDir);
+  });
+});
