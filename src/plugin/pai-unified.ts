@@ -52,6 +52,10 @@ import {
   onLifecycleSessionEnd,
 } from "../handlers/session-lifecycle.js";
 import {
+  implicitSentimentHandler,
+  clearImplicitSentimentState,
+} from "../handlers/implicit-sentiment.js";
+import {
   getModelRoutingContext,
   consumeFallbackSuggestion,
   formatFallbackReminder,
@@ -308,6 +312,11 @@ export const PaiPlugin = async (_ctx: unknown) => {
         ),
       );
 
+      // Implicit sentiment detection
+      safeHandler("sentiment.implicit", () =>
+        implicitSentimentHandler(sid, content),
+      );
+
       // Plan mode message handler — detect activation/deactivation
       const wasPlanActive = safeHandler("planMode.checkBefore", () => isPlanModeActive(sid));
       safeHandler("planMode.message", () => planModeMessageHandler(sid, content));
@@ -449,6 +458,7 @@ export const PaiPlugin = async (_ctx: unknown) => {
           safeHandler("cleanup.agentTeams", () => clearAgentTeamsState(sid));
           safeHandler("cleanup.dedup", () => clearSessionDedup(sid));
           safeHandler("cleanup.fallbackState", () => clearFallbackState(sid));
+          safeHandler("cleanup.implicitSentiment", () => clearImplicitSentimentState(sid));
         }
       }
 
