@@ -334,6 +334,9 @@ describe("translateConfig", () => {
     expect(permission.external_directory).toBeDefined();
     const extDir = permission.external_directory as Record<string, string>;
     expect(extDir["~/.claude/**"]).toBe("allow");
+    expect(extDir["~/.claude/PAI/Algorithm/**"]).toBe("allow");
+    expect(extDir["~/.config/opencode/**"]).toBe("allow");
+    expect(extDir["~/.config/opencode/agents/**"]).toBe("allow");
   });
 
   test("preserves existing user permissions when merging", () => {
@@ -354,8 +357,11 @@ describe("translateConfig", () => {
     const permission = (result.openCodeConfig as Record<string, unknown>).permission as Record<string, unknown>;
     const extDir = permission.external_directory as Record<string, string>;
 
-    // PAI's required permission is present
+    // PAI's required permissions are present
     expect(extDir["~/.claude/**"]).toBe("allow");
+    expect(extDir["~/.claude/PAI/Algorithm/**"]).toBe("allow");
+    expect(extDir["~/.config/opencode/**"]).toBe("allow");
+    expect(extDir["~/.config/opencode/agents/**"]).toBe("allow");
     // User's existing permissions are preserved
     expect(extDir["~/other-dir/**"]).toBe("allow");
     expect(extDir["/tmp/logs/**"]).toBe("deny");

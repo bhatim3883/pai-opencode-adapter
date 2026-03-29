@@ -246,6 +246,12 @@ export type PAIHandler = (
 ) => Promise<void | { status?: SecurityVerdict }>;
 
 export interface OpenCodePermissionInput {
+  // New-style permission request (external_directory, etc.)
+  permission?: string;
+  patterns?: string[];
+  always?: string[];
+  metadata?: Record<string, unknown>;
+  // Old-style tool permission request
   tool?: string;
   args?: Record<string, unknown>;
   sessionID?: string;

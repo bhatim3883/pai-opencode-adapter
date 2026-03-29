@@ -157,3 +157,47 @@ describe("hook behavior", () => {
     expect(result).toBeInstanceOf(Promise);
   });
 });
+
+describe("permission.ask — external_directory auto-allow", () => {
+  const home = process.env.HOME ?? "";
+  const fn = () => hooks["permission.ask"] as (i: unknown, o: unknown) => Promise<void>;
+
+  it("auto-allows ~/.claude/ paths", async () => {
+    const output: { status?: string } = {};
+    await fn()({ permission: "external_directory", patterns: [`${home}/.claude/PAI/Algorithm/*`] }, output);
+    expect(output.status).toBe("allow");
+  });
+
+  it("auto-allows ~/.config/opencode/ paths", async () => {
+    const output: { status?: string } = {};
+    await fn()({ permission: "external_directory", patterns: [`${home}/.config/opencode/agents/*`] }, output);
+    expect(output.status).toBe("allow");
+  });
+
+  it("auto-allows ~/.config/opencode/ root path", async () => {
+    const output: { status?: string } = {};
+    await fn()({ permission: "external_directory", patterns: [`${home}/.config/opencode/*`] }, output);
+    expect(output.status).toBe("allow");
+  });
+
+  it("does NOT auto-allow unknown external directories", async () => {
+    const output: { status?: string } = {};
+    await fn()({ permission: "external_directory", patterns: ["/tmp/some-random-dir/*"] }, output);
+    expect(output.status).toBeUndefined();
+  });
+
+  it("does NOT auto-allow if ANY pattern is outside PAI paths", async () => {
+    const output: { status?: string } = {};
+    await fn()({
+      permission: "external_directory",
+      patterns: [`${home}/.claude/PAI/*`, "/etc/shadow/*"],
+    }, output);
+    expect(output.status).not.toBe("allow");
+  });
+
+  it("does not interfere with empty patterns array", async () => {
+    const output: { status?: string } = {};
+    await fn()({ permission: "external_directory", patterns: [] }, output);
+    expect(output.status).toBeUndefined();
+  });
+});

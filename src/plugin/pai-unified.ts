@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { fileLog } from "../lib/file-logger.js";
 import { emit as eventBusEmit } from "../core/event-bus.js";
 import { isDuplicate, clearSessionDedup } from "../core/dedup-cache.js";
@@ -37,6 +38,7 @@ import {
   onPlanModeChange as statuslinePlanModeChange,
   onSessionEnd as statuslineSessionEnd,
   setContextLimit as statuslineSetContextLimit,
+  syncFromPRD as statuslineSyncFromPRD,
 } from "../handlers/statusline-writer.js";
 import {
   agentTeamDispatch,
@@ -57,6 +59,7 @@ import {
   setFallbackSuggestion,
   clearFallbackState,
 } from "../lib/model-resolver.js";
+import { syncAgentModels } from "../lib/agent-model-sync.js";
 
 const PLUGIN_NAME = "pai-adapter";
 const PLUGIN_VERSION = "0.1.0";
@@ -115,10 +118,44 @@ function safeHandler<T>(name: string, fn: () => T): T | undefined {
 export const PaiPlugin = async (_ctx: unknown) => {
   fileLog(`[pai-unified] plugin initialized: ${PLUGIN_NAME}@${PLUGIN_VERSION}`);
 
+  // Sync agent model assignments from pai-adapter.json into agent .md files.
+  // This ensures the `model:` field in each agent's YAML frontmatter matches
+  // the configured role→model mapping, so OpenCode spawns agents with the
+  // correct models instead of using stale hardcoded values.
+  safeHandler("agentModelSync", () => {
+    const result = syncAgentModels();
+    if (result.synced.length > 0) {
+      fileLog(`[pai-unified] Agent models synced: ${result.synced.join(", ")}`);
+    }
+  });
+
   return {
     // ── permission.ask ──────────────────────────────────────
     "permission.ask": async (input: Record<string, unknown>, output: Record<string, unknown>) => {
-      // Security gate
+      // ── External directory auto-allow for PAI fundamental paths ──
+      // OpenCode sends: { permission: "external_directory", patterns: ["/abs/path/*"], ... }
+      // These paths must never prompt the user — they are core PAI infrastructure.
+      if (input.permission === "external_directory") {
+        const home = homedir();
+        const PAI_ALLOWED_PREFIXES = [
+          home + "/.claude/",
+          home + "/.config/opencode/",
+        ];
+        const patterns = Array.isArray(input.patterns) ? (input.patterns as string[]) : [];
+        const allAllowed = patterns.length > 0 && patterns.every((p) => {
+          const normalized = typeof p === "string" ? p.replace(/\\/g, "/") : "";
+          return PAI_ALLOWED_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+        });
+        if (allAllowed) {
+          fileLog(`[permission] auto-allow external_directory for PAI paths: ${patterns.join(", ")}`, "info");
+          (output as { status: string }).status = "allow";
+          return;
+        }
+        // Non-PAI external directory — let OpenCode's default ask behaviour show
+        return;
+      }
+
+      // ── Tool-based security gate (old-style permission requests) ──
       safeHandler("security.permissionGate", () =>
         permissionGateHandler(
           input as { tool?: string; args?: Record<string, unknown>; sessionID?: string },
@@ -222,6 +259,9 @@ export const PaiPlugin = async (_ctx: unknown) => {
       safeHandler("statusline.postTool", () =>
         statuslineToolExecuted(sid, toolNameForStatus, Math.floor(durationMs / 1000)),
       );
+
+      // PRD sync — refresh Algorithm phase/effort/ISC from latest PRD
+      safeHandler("statusline.prdSync", () => statuslineSyncFromPRD(sid));
 
       // Model fallback detection — check if a Task/agent tool failed with a
       // provider error (rate limit, model not found, unavailable). If so, store
