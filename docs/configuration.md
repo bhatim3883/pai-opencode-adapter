@@ -132,6 +132,77 @@ This reads `~/.claude/settings.json` and merges it with `~/.config/opencode/open
 - **Plugin registration** — Adds `pai-opencode-adapter` to plugin array if not present
 - **User field preservation** — Never overwrites existing custom user fields
 
+## PAI Skills API Keys (`~/.claude/PAI/.env`)
+
+PAI skills that call external APIs (image generation, scraping, audio processing, etc.) read their API keys from `~/.claude/PAI/.env`. This is a standard `.env` file loaded by each skill's `loadEnv()` function at runtime.
+
+**This file is separate from:**
+- `opencode.json` — OpenCode's own config (provider, model, plugin paths)
+- `pai-adapter.json` — Adapter config (identity, voice, notifications, logging)
+
+**The installer creates this file** during Step 3 ("PAI Skills API Keys"). Re-running the installer merges new keys without overwriting existing ones.
+
+### File Format
+
+```bash
+# ~/.claude/PAI/.env
+# PAI Skills API Keys — one per line, KEY=VALUE format
+
+# Art skill (image generation)
+GOOGLE_API_KEY=AIza...
+REPLICATE_API_TOKEN=r8_...
+OPENAI_API_KEY=sk-...
+REMOVEBG_API_KEY=...
+
+# Scraping
+APIFY_TOKEN=apify_api_...
+BRIGHT_DATA_API_KEY=...
+
+# Audio
+CLEANVOICE_API_KEY=...
+
+# Infrastructure
+CLOUDFLARE_API_TOKEN=...
+
+# US Metrics
+FRED_API_KEY=...
+EIA_API_KEY=...
+
+# Security/Recon
+IPINFO_API_KEY=...
+SHODAN_API_KEY=...
+VIRUSTOTAL_API_KEY=...
+CENSYS_API_SECRET=...
+DEHASHED_API_KEY=...
+HUNTER_API_KEY=...
+HIBP_API_KEY=...
+```
+
+### Key Name Mapping
+
+Some skills expect specific key names that may differ from your environment variables. The `.env` file handles the mapping:
+
+| Your Environment | Skill Expects | Notes |
+|------------------|---------------|-------|
+| `GEMINI_API_KEY` | `GOOGLE_API_KEY` | Art skill checks `GOOGLE_API_KEY` on line 611 of Generate.ts |
+
+If you have `GEMINI_API_KEY` set but Art fails with "Missing environment variable: GOOGLE_API_KEY", add this line to `~/.claude/PAI/.env`:
+
+```bash
+GOOGLE_API_KEY=your-gemini-key-value
+```
+
+### Which Skills Need Keys
+
+| Skill | Primary Key | Optional Keys |
+|-------|-------------|---------------|
+| Art | `GOOGLE_API_KEY` | `REPLICATE_API_TOKEN`, `OPENAI_API_KEY`, `REMOVEBG_API_KEY` |
+| Scraping/Apify | `APIFY_TOKEN` | `BRIGHT_DATA_API_KEY` |
+| Audio Editor | `CLEANVOICE_API_KEY` | — |
+| Cloudflare | `CLOUDFLARE_API_TOKEN` | — |
+| US Metrics | `FRED_API_KEY` | `EIA_API_KEY` |
+| Security/Recon | `IPINFO_API_KEY` | `SHODAN_API_KEY`, `VIRUSTOTAL_API_KEY`, `CENSYS_API_SECRET`, `DEHASHED_API_KEY`, `HUNTER_API_KEY`, `HIBP_API_KEY` |
+
 ## Model Routing and Fallback Chains
 
 The adapter maps PAI's 3-tier model system (haiku/sonnet/opus) to configurable per-role models. Each role (`default`, `intern`, `architect`, `engineer`, `explorer`, `reviewer`) can have a primary model and a fallback chain.

@@ -70,6 +70,14 @@ for arg in "$@"; do
       echo "  ELEVENLABS_API_KEY    ElevenLabs API key (optional)"
       echo "  NTFY_TOPIC            ntfy.sh topic for push notifications (optional)"
       echo "  DISCORD_WEBHOOK       Discord webhook URL (optional)"
+      echo ""
+      echo "  PAI Skill API keys (written to \${PAI_DIR}/PAI/.env):"
+      echo "  GOOGLE_API_KEY        Google/Gemini key for Art skill image generation"
+      echo "  APIFY_TOKEN           Apify token for Scraping skill"
+      echo "  CLEANVOICE_API_KEY    Cleanvoice key for Audio Editor skill"
+      echo "  CLOUDFLARE_API_TOKEN  Cloudflare API token for Cloudflare skill"
+      echo "  FRED_API_KEY          FRED API key for US Metrics skill"
+      echo "  IPINFO_API_KEY        IPinfo key for Security/Recon skill"
       exit 0
       ;;
   esac
@@ -206,13 +214,247 @@ if [[ "$NON_INTERACTIVE" == "false" ]]; then
   fi
 fi
 
-# ─── STEP 3: Directory Setup ──────────────────────────────────────────────────
-section "Step 3 — Directory Setup"
+# ─── STEP 3: PAI Skills API Keys ──────────────────────────────────────────────
+section "Step 3 — PAI Skills API Keys"
 
-# Track all created directories for backup manifest
+# Track all created/modified files for backup manifest (initialized here,
+# before any step that creates or modifies files)
 CREATED_DIRS=()
 CREATED_FILES=()
 MODIFIED_FILES=()
+
+PAI_ENV_FILE="$PAI_DIR/PAI/.env"
+PAI_ENV_KEYS=()
+
+info "PAI skills use API keys stored in ${BOLD}$PAI_ENV_FILE${RESET}"
+info "Each skill below is optional — skip any you don't need."
+echo ""
+
+if [[ "$NON_INTERACTIVE" == "false" ]]; then
+
+  # ── Art / Image Generation (GOOGLE_API_KEY) ────────────────────────────────
+  prompt "Activate ${BOLD}Art${RESET} skill (AI image generation)? [y/N]:"
+  read -r ART_INPUT
+  if [[ "$(echo "${ART_INPUT:-n}" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+    prompt "Google/Gemini API key (for image generation with Gemini):"
+    read -r -s ART_GOOGLE_KEY
+    echo ""
+    if [[ -n "$ART_GOOGLE_KEY" ]]; then
+      PAI_ENV_KEYS+=("GOOGLE_API_KEY=$ART_GOOGLE_KEY")
+      success "GOOGLE_API_KEY configured"
+    else
+      PAI_ENV_KEYS+=("# GOOGLE_API_KEY=         # Required for Art skill (Gemini image generation)")
+      warn "GOOGLE_API_KEY left blank — add it to $PAI_ENV_FILE later"
+    fi
+    info "  ${GRAY}Optional: REPLICATE_API_TOKEN (Flux models) — add to $PAI_ENV_FILE${RESET}"
+    info "  ${GRAY}Optional: OPENAI_API_KEY (GPT-image-1 model) — add to $PAI_ENV_FILE${RESET}"
+    info "  ${GRAY}Optional: REMOVEBG_API_KEY (background removal) — add to $PAI_ENV_FILE${RESET}"
+    echo ""
+  fi
+
+  # ── Scraping / Apify (APIFY_TOKEN) ─────────────────────────────────────────
+  prompt "Activate ${BOLD}Scraping${RESET} skill (web & social media scraping)? [y/N]:"
+  read -r SCRAPING_INPUT
+  if [[ "$(echo "${SCRAPING_INPUT:-n}" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+    prompt "Apify API token (for social media & web scraping):"
+    read -r -s SCRAPING_APIFY_KEY
+    echo ""
+    if [[ -n "$SCRAPING_APIFY_KEY" ]]; then
+      PAI_ENV_KEYS+=("APIFY_TOKEN=$SCRAPING_APIFY_KEY")
+      success "APIFY_TOKEN configured"
+    else
+      PAI_ENV_KEYS+=("# APIFY_TOKEN=            # Required for Scraping/Apify skill")
+      warn "APIFY_TOKEN left blank — add it to $PAI_ENV_FILE later"
+    fi
+    info "  ${GRAY}Optional: BRIGHT_DATA_API_KEY (proxy scraping) — add to $PAI_ENV_FILE${RESET}"
+    echo ""
+  fi
+
+  # ── Audio Editor (CLEANVOICE_API_KEY) ──────────────────────────────────────
+  prompt "Activate ${BOLD}Audio Editor${RESET} skill (audio cleaning & polish)? [y/N]:"
+  read -r AUDIO_INPUT
+  if [[ "$(echo "${AUDIO_INPUT:-n}" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+    prompt "Cleanvoice API key (for cloud audio polish):"
+    read -r -s AUDIO_CLEANVOICE_KEY
+    echo ""
+    if [[ -n "$AUDIO_CLEANVOICE_KEY" ]]; then
+      PAI_ENV_KEYS+=("CLEANVOICE_API_KEY=$AUDIO_CLEANVOICE_KEY")
+      success "CLEANVOICE_API_KEY configured"
+    else
+      PAI_ENV_KEYS+=("# CLEANVOICE_API_KEY=     # Required for AudioEditor polish step")
+      warn "CLEANVOICE_API_KEY left blank — add it to $PAI_ENV_FILE later"
+    fi
+    echo ""
+  fi
+
+  # ── Cloudflare (CF_API_TOKEN) ──────────────────────────────────────────────
+  prompt "Activate ${BOLD}Cloudflare${RESET} skill (Workers, Pages, DNS)? [y/N]:"
+  read -r CF_INPUT
+  if [[ "$(echo "${CF_INPUT:-n}" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+    prompt "Cloudflare API token:"
+    read -r -s CF_KEY
+    echo ""
+    if [[ -n "$CF_KEY" ]]; then
+      PAI_ENV_KEYS+=("CLOUDFLARE_API_TOKEN=$CF_KEY")
+      success "CLOUDFLARE_API_TOKEN configured"
+    else
+      PAI_ENV_KEYS+=("# CLOUDFLARE_API_TOKEN=   # Required for Cloudflare skill")
+      warn "CLOUDFLARE_API_TOKEN left blank — add it to $PAI_ENV_FILE later"
+    fi
+    echo ""
+  fi
+
+  # ── US Metrics (FRED_API_KEY) ──────────────────────────────────────────────
+  prompt "Activate ${BOLD}US Metrics${RESET} skill (economic indicators)? [y/N]:"
+  read -r METRICS_INPUT
+  if [[ "$(echo "${METRICS_INPUT:-n}" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+    prompt "FRED API key (https://fred.stlouisfed.org/docs/api/api_key.html):"
+    read -r -s METRICS_FRED_KEY
+    echo ""
+    if [[ -n "$METRICS_FRED_KEY" ]]; then
+      PAI_ENV_KEYS+=("FRED_API_KEY=$METRICS_FRED_KEY")
+      success "FRED_API_KEY configured"
+    else
+      PAI_ENV_KEYS+=("# FRED_API_KEY=           # Required for US Metrics skill")
+      warn "FRED_API_KEY left blank — add it to $PAI_ENV_FILE later"
+    fi
+    info "  ${GRAY}Optional: EIA_API_KEY (gas prices) — add to $PAI_ENV_FILE${RESET}"
+    echo ""
+  fi
+
+  # ── Security / Recon (IPINFO_API_KEY) ──────────────────────────────────────
+  prompt "Activate ${BOLD}Security/Recon${RESET} skill (network reconnaissance)? [y/N]:"
+  read -r RECON_INPUT
+  if [[ "$(echo "${RECON_INPUT:-n}" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+    prompt "IPinfo API key (for IP/ASN lookups):"
+    read -r -s RECON_IPINFO_KEY
+    echo ""
+    if [[ -n "$RECON_IPINFO_KEY" ]]; then
+      PAI_ENV_KEYS+=("IPINFO_API_KEY=$RECON_IPINFO_KEY")
+      success "IPINFO_API_KEY configured"
+    else
+      PAI_ENV_KEYS+=("# IPINFO_API_KEY=         # Required for Security/Recon skill")
+      warn "IPINFO_API_KEY left blank — add it to $PAI_ENV_FILE later"
+    fi
+    info "  ${GRAY}Optional: SHODAN_API_KEY, VIRUSTOTAL_API_KEY, CENSYS_API_SECRET — add to $PAI_ENV_FILE${RESET}"
+    info "  ${GRAY}Optional: DEHASHED_API_KEY, HUNTER_API_KEY, HIBP_API_KEY — add to $PAI_ENV_FILE${RESET}"
+    echo ""
+  fi
+
+fi  # end non-interactive
+
+# ── Non-interactive: pick up keys from environment ───────────────────────────
+if [[ "$NON_INTERACTIVE" == "true" ]]; then
+  [[ -n "${GOOGLE_API_KEY:-}" ]]        && PAI_ENV_KEYS+=("GOOGLE_API_KEY=$GOOGLE_API_KEY")
+  [[ -n "${APIFY_TOKEN:-}" ]]           && PAI_ENV_KEYS+=("APIFY_TOKEN=$APIFY_TOKEN")
+  [[ -n "${CLEANVOICE_API_KEY:-}" ]]    && PAI_ENV_KEYS+=("CLEANVOICE_API_KEY=$CLEANVOICE_API_KEY")
+  [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]  && PAI_ENV_KEYS+=("CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN")
+  [[ -n "${FRED_API_KEY:-}" ]]          && PAI_ENV_KEYS+=("FRED_API_KEY=$FRED_API_KEY")
+  [[ -n "${IPINFO_API_KEY:-}" ]]        && PAI_ENV_KEYS+=("IPINFO_API_KEY=$IPINFO_API_KEY")
+fi
+
+# ── Write PAI .env file ──────────────────────────────────────────────────────
+# Strategy: MERGE new keys into existing .env rather than overwriting.
+# - Existing keys the user set manually are preserved
+# - New keys from this run are added or updated
+# - Commented-out hints are only added if the key doesn't already exist
+
+if [[ ${#PAI_ENV_KEYS[@]} -gt 0 ]]; then
+  PAI_ENV_DIR="$(dirname "$PAI_ENV_FILE")"
+  if [[ ! -d "$PAI_ENV_DIR" ]]; then
+    mkdir -p "$PAI_ENV_DIR"
+    success "Created: $PAI_ENV_DIR"
+  fi
+
+  if [[ -f "$PAI_ENV_FILE" ]]; then
+    # Backup existing .env before merging
+    cp "$PAI_ENV_FILE" "${PAI_ENV_FILE}.bak-$(date +%Y%m%d%H%M%S)"
+    MODIFIED_FILES+=("$PAI_ENV_FILE")
+    info "Backed up existing: ${PAI_ENV_FILE}.bak-*"
+
+    # Read existing file content for merge
+    EXISTING_ENV_CONTENT=$(<"$PAI_ENV_FILE")
+
+    # Merge: update existing keys, append new ones
+    for key_line in "${PAI_ENV_KEYS[@]}"; do
+      # Skip comment lines (hints for blank keys)
+      if [[ "$key_line" == \#* ]]; then
+        # Only add comment hint if key name isn't already in the file (set or commented)
+        hint_key=$(echo "$key_line" | sed 's/^# *//;s/=.*//')
+        if ! grep -q "^${hint_key}=" "$PAI_ENV_FILE" 2>/dev/null; then
+          echo "$key_line" >> "$PAI_ENV_FILE"
+        fi
+        continue
+      fi
+
+      # Extract key name (everything before first =)
+      key_name="${key_line%%=*}"
+
+      if grep -q "^${key_name}=" "$PAI_ENV_FILE" 2>/dev/null; then
+        # Key exists — update in place
+        # Use a temp file for sed portability (macOS sed -i requires backup suffix)
+        sed -i.sedtmp "s|^${key_name}=.*|${key_line}|" "$PAI_ENV_FILE"
+        rm -f "${PAI_ENV_FILE}.sedtmp"
+        info "Updated: $key_name"
+      elif grep -q "^# *${key_name}=" "$PAI_ENV_FILE" 2>/dev/null; then
+        # Key exists but commented out — replace the comment with the active key
+        sed -i.sedtmp "s|^# *${key_name}=.*|${key_line}|" "$PAI_ENV_FILE"
+        rm -f "${PAI_ENV_FILE}.sedtmp"
+        success "Activated: $key_name"
+      else
+        # Key doesn't exist — append
+        echo "$key_line" >> "$PAI_ENV_FILE"
+        success "Added: $key_name"
+      fi
+    done
+
+    success "Merged keys into: $PAI_ENV_FILE"
+  else
+    # First run — write fresh .env with header and all keys
+    {
+      echo "# ═══════════════════════════════════════════════════════════════"
+      echo "# PAI Skills — API Keys"
+      echo "# Generated by PAI OpenCode Adapter installer on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "#"
+      echo "# Skills load this file from \${PAI_DIR}/.env (default: ~/.claude/PAI/.env)"
+      echo "# Add keys here for any PAI skill that needs external API access."
+      echo "# ═══════════════════════════════════════════════════════════════"
+      echo ""
+      for key_line in "${PAI_ENV_KEYS[@]}"; do
+        echo "$key_line"
+      done
+      echo ""
+      echo "# ─── Additional keys (add as needed) ────────────────────────────"
+      echo "# REPLICATE_API_TOKEN=    # Art skill: Flux image generation models"
+      echo "# OPENAI_API_KEY=         # Art skill: GPT-image-1 model"
+      echo "# REMOVEBG_API_KEY=       # Art skill: Background removal (remove.bg)"
+      echo "# BRIGHT_DATA_API_KEY=    # Scraping skill: Proxy-based web scraping"
+      echo "# EIA_API_KEY=            # US Metrics skill: Energy/gas price data"
+      echo "# SHODAN_API_KEY=         # Security skill: Shodan network search"
+      echo "# VIRUSTOTAL_API_KEY=     # Security skill: Malware/URL analysis"
+      echo "# CENSYS_API_SECRET=      # Security skill: Internet-wide scan data"
+      echo "# DEHASHED_API_KEY=       # Security skill: Breach data lookups"
+      echo "# HUNTER_API_KEY=         # Security skill: Email finder"
+      echo "# HIBP_API_KEY=           # Security skill: Have I Been Pwned"
+      echo "# DISCORD_BOT_TOKEN=      # Art skill: Midjourney via Discord bot"
+      echo "# MIDJOURNEY_CHANNEL_ID=  # Art skill: Midjourney Discord channel"
+    } > "$PAI_ENV_FILE"
+
+    CREATED_FILES+=("$PAI_ENV_FILE")
+    success "Created: $PAI_ENV_FILE"
+  fi
+
+  # Restrict permissions — this file contains secrets
+  chmod 600 "$PAI_ENV_FILE"
+  info "Permissions set: 600"
+elif [[ -f "$PAI_ENV_FILE" ]]; then
+  info "No new skill keys — existing $PAI_ENV_FILE preserved"
+else
+  info "No skill keys configured — you can create $PAI_ENV_FILE later"
+fi
+
+# ─── STEP 4: Directory Setup ──────────────────────────────────────────────────
+section "Step 4 — Directory Setup"
 
 create_dir() {
   local dir="$1"
@@ -243,8 +485,8 @@ if [[ -d "$PAI_DIR" ]]; then
   create_dir "$PAI_DIR/MEMORY/sessions"
 fi
 
-# ─── STEP 4: Build ────────────────────────────────────────────────────────────
-section "Step 4 — Build"
+# ─── STEP 5: Build ────────────────────────────────────────────────────────────
+section "Step 5 — Build"
 
 info "Building plugin from source..."
 
@@ -259,8 +501,8 @@ else
   warn "Build produced warnings (may be fine for TypeScript declarations)"
 fi
 
-# ─── STEP 5: Deploy Plugin Files ──────────────────────────────────────────────
-section "Step 5 — Deploy Plugin"
+# ─── STEP 6: Deploy Plugin Files ──────────────────────────────────────────────
+section "Step 6 — Deploy Plugin"
 
 # Copy plugin source to OpenCode plugin dir
 cp "$REPO_DIR/src/plugin/pai-unified.ts" "$OPENCODE_PLUGIN_DIR/pai-unified.ts"
@@ -287,10 +529,10 @@ PKGJSON
 CREATED_FILES+=("$OPENCODE_PLUGIN_DIR/package.json")
 success "Deployed: $OPENCODE_PLUGIN_DIR/package.json"
 
-# ─── STEP 6: Generate Configuration Files ─────────────────────────────────────
-section "Step 6 — Configuration Files"
+# ─── STEP 7: Generate Configuration Files ─────────────────────────────────────
+section "Step 7 — Configuration Files"
 
-# --- 6a: Generate pai-adapter.json (plugin-specific config) ---
+# --- 7a: Generate pai-adapter.json (plugin-specific config) ---
 
 generate_pai_adapter_config() {
   local voice_enabled="false"
@@ -355,7 +597,7 @@ generate_pai_adapter_config > "$PAI_ADAPTER_CONFIG"
 CREATED_FILES+=("$PAI_ADAPTER_CONFIG")
 success "Created: $PAI_ADAPTER_CONFIG"
 
-# --- 6b: Ensure opencode.json has the plugin entry (but NO pai section) ---
+# --- 7b: Ensure opencode.json has the plugin entry (but NO pai section) ---
 
 PLUGIN_PATH="file://$REPO_DIR/src/plugin/pai-unified.ts"
 
@@ -405,8 +647,8 @@ OCCONFIG
   success "Created: $OPENCODE_CONFIG"
 fi
 
-# ─── STEP 7: StatusLine Setup ─────────────────────────────────────────────────
-section "Step 7 — StatusLine Setup"
+# ─── STEP 8: StatusLine Setup ─────────────────────────────────────────────────
+section "Step 8 — StatusLine Setup"
 
 STATUSLINE_SCRIPT="$REPO_DIR/src/statusline/install-statusline.sh"
 if [[ -f "$STATUSLINE_SCRIPT" ]]; then
@@ -426,8 +668,8 @@ else
   warn "StatusLine script not found at: $STATUSLINE_SCRIPT"
 fi
 
-# ─── STEP 8: AGENTS.md Generation ────────────────────────────────────────────
-section "Step 8 — AGENTS.md Generation"
+# ─── STEP 9: AGENTS.md Generation ────────────────────────────────────────────
+section "Step 9 — AGENTS.md Generation"
 
 AGENTS_GENERATOR="$REPO_DIR/src/generators/build-agents-md.ts"
 if [[ -f "$AGENTS_GENERATOR" ]] && [[ -d "$PAI_DIR/agents" ]]; then
@@ -444,8 +686,8 @@ else
   info "Skipping AGENTS.md generation (PAI agents dir not found or generator missing)"
 fi
 
-# ─── STEP 8b: Deploy PAI-Native Experience ───────────────────────────────────
-section "Step 8b — PAI-Native Experience (Agents, Theme, Commands)"
+# ─── STEP 9b: Deploy PAI-Native Experience ───────────────────────────────────
+section "Step 9b — PAI-Native Experience (Agents, Theme, Commands)"
 
 # Deploy PAI agents to OpenCode config
 AGENTS_SRC="$REPO_DIR/src/config/agents"
@@ -526,8 +768,8 @@ fi
 
 info "PAI-native experience deployed: $(ls "$AGENTS_TARGET" 2>/dev/null | wc -l | tr -d ' ') agents, $(ls "$THEMES_TARGET" 2>/dev/null | wc -l | tr -d ' ') themes, $(ls "$COMMANDS_TARGET" 2>/dev/null | wc -l | tr -d ' ') commands"
 
-# ─── STEP 9: Write Backup Manifest ───────────────────────────────────────────
-section "Step 9 — Backup Manifest"
+# ─── STEP 10: Write Backup Manifest ───────────────────────────────────────────
+section "Step 10 — Backup Manifest"
 
 MANIFEST_FILE="$OPENCODE_PLUGIN_DIR/.backup-manifest.json"
 
@@ -572,8 +814,8 @@ MANIFEST
 
 success "Backup manifest written: $MANIFEST_FILE"
 
-# ─── STEP 10: Verification ────────────────────────────────────────────────────
-section "Step 10 — Verification"
+# ─── STEP 11: Verification ────────────────────────────────────────────────────
+section "Step 11 — Verification"
 
 VERIFY_FAIL=false
 

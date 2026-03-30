@@ -236,4 +236,53 @@ set -g status-interval 2
 
 ---
 
+## Issue 7: PAI Skill API Key Missing
+
+**Symptom:**
+
+```
+Missing environment variable: GOOGLE_API_KEY
+```
+
+or similar errors like `Missing environment variable: APIFY_TOKEN`, `CLEANVOICE_API_KEY`, etc. when using PAI skills (Art, Scraping, Audio Editor, etc.).
+
+**Cause:** PAI skills read API keys from `~/.claude/PAI/.env`, not from your shell environment or `pai-adapter.json`. The file either doesn't exist or is missing the required key.
+
+**Solution:**
+
+1. **Re-run the installer** (easiest — it prompts for skill keys and uses merge logic):
+
+```bash
+cd ~/projects/pai-opencode-adapter
+bash scripts/install.sh
+```
+
+2. **Or add the key manually:**
+
+```bash
+# Create the file if it doesn't exist
+mkdir -p ~/.claude/PAI
+echo 'GOOGLE_API_KEY=your-key-here' >> ~/.claude/PAI/.env
+```
+
+3. **Common key name mismatch**: If you have `GEMINI_API_KEY` set in your environment but the Art skill expects `GOOGLE_API_KEY`, add this mapping to `~/.claude/PAI/.env`:
+
+```bash
+GOOGLE_API_KEY=your-gemini-key-value
+```
+
+**Key reference:**
+
+| Skill | Required Key | Where to Get |
+|-------|-------------|--------------|
+| Art | `GOOGLE_API_KEY` | https://aistudio.google.com/apikey |
+| Scraping | `APIFY_TOKEN` | https://console.apify.com/account#/integrations |
+| Audio Editor | `CLEANVOICE_API_KEY` | https://cleanvoice.ai |
+| US Metrics | `FRED_API_KEY` | https://fred.stlouisfed.org/docs/api/api_key.html |
+| Security/Recon | `IPINFO_API_KEY` | https://ipinfo.io/signup |
+
+See [Configuration: PAI Skills API Keys](configuration.md#pai-skills-api-keys-claudepaiv) for the full list.
+
+---
+
 [← Back to README](../README.md)

@@ -130,6 +130,39 @@ export GOOGLE_API_KEY=...
 | Self-Updater PRs | `GITHUB_TOKEN` | Auto-update PRs | https://github.com/settings/tokens |
 | Cloudflare MCP | Cloudflare credentials | CF features | https://dash.cloudflare.com |
 
+### Tier 3: PAI Skills API Keys (Optional)
+
+PAI skills (Art, Scraping, Audio, Security, etc.) use their own API keys, stored in `~/.claude/PAI/.env`. This file is separate from `pai-adapter.json` (adapter config) and `opencode.json` (OpenCode config).
+
+**The installer (`scripts/install.sh`) has a dedicated Step 3** that prompts you for skill API keys interactively. You can also re-run the installer at any time — it uses merge logic and won't overwrite keys you've already set.
+
+| Skill | Primary Key | Required? | Get It |
+|-------|-------------|-----------|--------|
+| **Art** (image generation) | `GOOGLE_API_KEY` | For Gemini images | https://aistudio.google.com/apikey |
+| **Art** (Flux models) | `REPLICATE_API_TOKEN` | For Flux images | https://replicate.com/account/api-tokens |
+| **Art** (GPT-image-1) | `OPENAI_API_KEY` | For OpenAI images | https://platform.openai.com/api-keys |
+| **Art** (bg removal) | `REMOVEBG_API_KEY` | For bg removal | https://www.remove.bg/api |
+| **Scraping** (Apify) | `APIFY_TOKEN` | For social scraping | https://console.apify.com/account#/integrations |
+| **Scraping** (Bright Data) | `BRIGHT_DATA_API_KEY` | For proxy scraping | https://brightdata.com |
+| **Audio Editor** | `CLEANVOICE_API_KEY` | For audio polish | https://cleanvoice.ai |
+| **Cloudflare** | `CLOUDFLARE_API_TOKEN` | For CF Workers | https://dash.cloudflare.com/profile/api-tokens |
+| **US Metrics** | `FRED_API_KEY` | For economic data | https://fred.stlouisfed.org/docs/api/api_key.html |
+| **US Metrics** | `EIA_API_KEY` | For energy data | https://www.eia.gov/opendata/register.php |
+| **Security/Recon** | `IPINFO_API_KEY` | For IP lookups | https://ipinfo.io/signup |
+| **Security/Recon** | `SHODAN_API_KEY` | For Shodan scans | https://account.shodan.io |
+
+> **Note**: You only need keys for skills you plan to use. Most users start with just `GOOGLE_API_KEY` for Art.
+
+**Manual setup** (if you prefer not to use the installer):
+
+```bash
+# Create or edit ~/.claude/PAI/.env
+cat >> ~/.claude/PAI/.env << 'EOF'
+GOOGLE_API_KEY=your-key-here
+APIFY_TOKEN=your-token-here
+EOF
+```
+
 ### Full API Key Reference Table
 
 | Feature | API Key Required | Where to Get |
@@ -142,6 +175,7 @@ export GOOGLE_API_KEY=...
 | Self-Updater PRs | Only for auto-update | GitHub tokens |
 | Cloudflare MCP | Only for CF features | Cloudflare dashboard |
 | Image Generation | Provider-dependent | Your LLM provider |
+| PAI Skills | Per-skill (see Tier 3) | `~/.claude/PAI/.env` |
 
 ---
 
@@ -174,6 +208,7 @@ bash scripts/install.sh
 This interactive installer:
 - Detects your OpenCode installation
 - Configures `opencode.json` automatically
+- Prompts for PAI skill API keys (creates `~/.claude/PAI/.env`)
 - Sets up environment variables
 - Validates your setup
 
