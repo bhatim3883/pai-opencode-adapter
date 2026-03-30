@@ -5,12 +5,16 @@ model: github-copilot/claude-opus-4.6
 color: "#EAB308"
 temperature: 0.1
 permission:
+  read: allow
   edit: deny
   bash:
     "*": deny
     "grep *": allow
     "rg *": allow
   webfetch: allow
+  external_directory:
+    "~/.claude/**": allow
+    "~/.config/opencode/**": allow
 ---
 
 # PAI Thinker Agent

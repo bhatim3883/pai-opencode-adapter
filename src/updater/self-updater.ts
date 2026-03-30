@@ -66,7 +66,7 @@ const OC_BASELINE_EVENTS = [
 
 const KNOWN_WORKAROUNDS = [
   { workaround: "dedup-cache", feature: "message.dedup", retireWhen: "OpenCode adds native dedup" },
-  { workaround: "agent-teams", feature: "native-agent-teams", retireWhen: "OpenCode adds agent orchestration API" },
+  { workaround: "agent-teams", feature: "native-agent-teams", retireWhen: "OpenCode adds native agent orchestration that replaces SDK-based adapter implementation" },
   { workaround: "plan-mode", feature: "native-plan-mode", retireWhen: "OpenCode adds plan/edit mode toggle" },
 ];
 

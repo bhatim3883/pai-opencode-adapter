@@ -73,7 +73,7 @@ This registry tracks custom implementations that bridge gaps where PAI hooks hav
 | Workaround | Custom Feature | PAI Mechanism | Adapter Implementation | OC Native? | Retire When |
 |------------|----------------|---------------|------------------------|------------|-------------|
 | dedup-cache | Message Deduplication | CC auto-dedup on message send | `src/core/dedup-cache.ts` (5s TTL, session-scoped) | No | OpenCode adds native message dedup API |
-| agent-teams | Agent Teams | CC sub-agent spawning | `src/handlers/agent-teams.ts` (custom OC tools: agent_team_dispatch, agent_team_status, agent_team_collect) | No | OpenCode adds native agent orchestration API |
+| agent-teams | Agent Team Coordination | CC sub-agent spawning | `src/handlers/agent-teams.ts` (5 custom OC tools: agent_team_create, agent_team_dispatch, agent_team_message, agent_team_status, agent_team_collect) — **real SDK-backed implementation** using `Session.create` (parent/child sessions), `Session.promptAsync` (messaging), and `Session.messages` (result collection) | Yes (via SDK) | OpenCode adds native agent orchestration API that replaces SDK-based adapter implementation |
 | plan-mode | Plan Mode | CC plan mode toggle | `src/handlers/plan-mode.ts` (tool blocking + agent switch on `/plan` command) | No | OpenCode adds plan/edit mode toggle API |
 | statusline | Status Line | CC status hook integration | `src/statusline/statusline.sh` (tmux status-right, reads session state JSON) | No | OpenCode adds TUI status display API |
 | voice-notifications | Voice/TTS | CC voice completion hook | `src/handlers/voice-notifications.ts` (ElevenLabs API, ntfy.sh, Discord webhooks) | No | OpenCode adds native voice output API |
@@ -95,6 +95,20 @@ This registry tracks custom implementations that bridge gaps where PAI hooks hav
 3. Developer reviews and implements migration to native API
 4. Workaround marked as `retired` in this registry
 5. Code removed in next major version
+
+---
+
+## OpenCode Native Capabilities (Not Adapter Responsibilities)
+
+The following capabilities are provided **natively by OpenCode** and do NOT require adapter implementation. The adapter observes these via hook logging but does not implement them:
+
+| Capability | OpenCode Source | What It Does | Adapter Role |
+|------------|----------------|--------------|--------------|
+| **Skill Tool** | `packages/opencode/src/tool/skill.ts` | Discovers and loads skills from `~/.claude/skills/`, `~/.agents/skills/`, `.opencode/skill/` | Logging only (`[skill-tracker]` in debug log) |
+| **Task Tool** | `packages/opencode/src/tool/task.ts` | Spawns real sub-agent sessions via `Session.create()` with `parentID`, returns results | Logging only (`[skill-tracker]` in debug log) |
+| **MCP Servers** | `opencode.json` → `"mcp"` key | Native MCP server support; tools appear directly in model's tool list | None — fully native |
+
+**Important:** The adapter's `agent_team_dispatch/status/collect` custom tools are an **optional coordination layer** for tracking dispatches. Real agent spawning happens through OpenCode's native Task tool. The custom tools provide session-scoped dispatch metadata tracking but do not replace or duplicate the Task tool.
 
 ---
 
@@ -162,13 +176,13 @@ The following features are **not supported** by the adapter:
 
 ---
 
-### 7. No agent spawning API
+### 7. Agent team tools use SDK-backed real sessions
 
-**Limitation:** Agent teams use custom tools, not native OC agent spawning.
+**Implementation:** Agent team tools (`agent_team_create/dispatch/message/status/collect`) create real OpenCode sessions using the SDK client (`Session.create`, `Session.promptAsync`, `Session.messages`).
 
-**Reason:** OpenCode does not expose sub-agent spawning to plugins.
+**Architecture:** Teams are modeled as parent sessions; teammates are child sessions. The adapter manages team/teammate registry and task board state per-coordinator-session. All state is cleared on session end.
 
-**Workaround:** Use `agent_team_dispatch` custom tool; results collected via `agent_team_collect`.
+**Note:** This is a full implementation of CC-equivalent agent teams, not just a tracking layer. Teammates are real sessions that can execute work autonomously.
 
 ---
 
@@ -431,8 +445,9 @@ This adapter was built against the following **17 OpenCode plugin API events**:
 
 | Feature | Claude Code (PAI) | OpenCode (Adapter) | Notes |
 |---------|-------------------|--------------------|--------|
-| Skills | ✅ Native | ✅ Adapted | Loaded from `~/.claude/skills/` |
-| Agents | ✅ Native | ✅ Adapted | Loaded from `~/.claude/agents/` |
+| Skills | ✅ Native | ✅ Native (OC built-in) | Loaded from `~/.claude/skills/`; adapter logs invocations |
+| Agents | ✅ Native | ✅ Native (OC built-in) | Task tool spawns real sub-agents; adapter logs invocations |
+| MCP Servers | ✅ Native | ✅ Native (OC built-in) | Configured in `opencode.json`; no adapter involvement |
 | Workflows | ✅ Native | ✅ Adapted | Loaded from `~/.claude/workflows/` |
 | StatusLine | ✅ Native | ✅ Adapted | Requires tmux |
 | Voice/TTS | ✅ Native | ✅ Adapted | Requires ElevenLabs API key |
@@ -450,7 +465,7 @@ This adapter was built against the following **17 OpenCode plugin API events**:
 
 **PAI-OpenCode Adapter Compatibility Registry**
 
-Last updated: 2026-03-21 • Version: 0.1.0
+Last updated: 2026-03-29 • Version: 0.1.1
 
 [Back to README](../README.md)
 

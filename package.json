@@ -8,6 +8,7 @@
     "test": "bun test --coverage"
   },
   "devDependencies": {
+    "@opencode-ai/plugin": "^1.3.6",
     "@types/bun": "latest"
   },
   "peerDependencies": {

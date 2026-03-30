@@ -50,10 +50,20 @@ describe("hook registration", () => {
 });
 
 describe("tool registration", () => {
-  it("has tool object with agent_team_dispatch", () => {
+  it("has tool object with agent_team_create", () => {
     const tools = hooks["tool"] as Record<string, unknown>;
     expect(typeof tools).toBe("object");
+    expect(typeof tools["agent_team_create"]).toBe("object");
+  });
+
+  it("has agent_team_dispatch tool", () => {
+    const tools = hooks["tool"] as Record<string, unknown>;
     expect(typeof tools["agent_team_dispatch"]).toBe("object");
+  });
+
+  it("has agent_team_message tool", () => {
+    const tools = hooks["tool"] as Record<string, unknown>;
+    expect(typeof tools["agent_team_message"]).toBe("object");
   });
 
   it("has agent_team_status tool", () => {
@@ -199,5 +209,116 @@ describe("permission.ask — external_directory auto-allow", () => {
     const output: { status?: string } = {};
     await fn()({ permission: "external_directory", patterns: [] }, output);
     expect(output.status).toBeUndefined();
+  });
+});
+
+describe("skill invocation logging", () => {
+  it("tool.execute.before does not throw when tool is 'skill'", async () => {
+    const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({ tool: "skill", sessionID: "test-skill-session", args: { name: "Research" } }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("tool.execute.before does not throw when tool is 'Skill' (capitalized)", async () => {
+    const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({ tool: "Skill", sessionID: "test-skill-session", args: { name: "FirstPrinciples" } }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("tool.execute.after does not throw when tool is 'skill'", async () => {
+    const fn = hooks["tool.execute.after"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({ tool: "skill", sessionID: "test-skill-session", args: { name: "Research" } }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("tool.execute.after does not throw when tool is 'Skill' (capitalized)", async () => {
+    const fn = hooks["tool.execute.after"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({ tool: "Skill", sessionID: "test-skill-session", args: { name: "Council" } }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("skill logging handles missing args gracefully", async () => {
+    const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({ tool: "skill", sessionID: "test-skill-session" }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("skill logging handles empty args gracefully", async () => {
+    const fn = hooks["tool.execute.after"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({ tool: "skill", sessionID: "test-skill-session", args: {} }, {}),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("task invocation logging", () => {
+  it("tool.execute.before does not throw when tool is 'task'", async () => {
+    const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({
+        tool: "task",
+        sessionID: "test-task-session",
+        args: { subagent_type: "engineer", description: "Build feature X" },
+      }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("tool.execute.before does not throw when tool is 'Task' (capitalized)", async () => {
+    const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({
+        tool: "Task",
+        sessionID: "test-task-session",
+        args: { subagent_type: "research", description: "Research topic" },
+      }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("tool.execute.after does not throw when tool is 'task'", async () => {
+    const fn = hooks["tool.execute.after"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({
+        tool: "task",
+        sessionID: "test-task-session",
+        args: { subagent_type: "thinker", description: "Analyze approach" },
+      }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("tool.execute.after does not throw when tool is 'Task' (capitalized)", async () => {
+    const fn = hooks["tool.execute.after"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({
+        tool: "Task",
+        sessionID: "test-task-session",
+        args: { subagent_type: "explorer", description: "Explore codebase" },
+      }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("task logging handles missing args gracefully", async () => {
+    const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({ tool: "Task", sessionID: "test-task-session" }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("task logging handles empty args gracefully", async () => {
+    const fn = hooks["tool.execute.after"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({ tool: "task", sessionID: "test-task-session", args: {} }, {}),
+    ).resolves.toBeUndefined();
+  });
+
+  it("non-skill non-task tools do not trigger skill-tracker logging (no throw)", async () => {
+    const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
+    await expect(
+      fn({ tool: "bash", sessionID: "test-session", args: { command: "ls" } }, {}),
+    ).resolves.toBeUndefined();
   });
 });

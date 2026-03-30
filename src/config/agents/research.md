@@ -5,6 +5,7 @@ model: github-copilot/gemini-3-pro-preview
 color: "#A855F7"
 temperature: 0.2
 permission:
+  read: allow
   edit: deny
   bash:
     "*": deny
@@ -14,6 +15,9 @@ permission:
     "git show*": allow
     "git diff*": allow
   webfetch: allow
+  external_directory:
+    "~/.claude/**": allow
+    "~/.config/opencode/**": allow
 ---
 
 # PAI Research Agent

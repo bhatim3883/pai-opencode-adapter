@@ -5,9 +5,13 @@ model: github-copilot/claude-sonnet-4.6
 color: "#06B6D4"
 temperature: 0.3
 permission:
+  read: allow
   edit: allow
   bash: allow
   webfetch: allow
+  external_directory:
+    "~/.claude/**": allow
+    "~/.config/opencode/**": allow
 ---
 
 # PAI Native Agent
@@ -43,10 +47,10 @@ If a task turns out to be more complex than expected (multi-file changes, debugg
 
 ## Context Access
 
-You have access to:
-- **TELOS (User Goals)**: `~/.claude/PAI/USER/TELOS/` — read when decisions need life-context
+All PAI context (TELOS, Algorithm, etc.) is pre-loaded into your system prompt by the context-loader. You have access to:
+- **TELOS (User Goals)**: Already injected in system prompt — do NOT re-read from disk
 - **Skills**: Available via the Skill tool for specialized tasks
-- **Memory**: `~/.claude/MEMORY/` for past work and learning
+- **Memory**: `~/.claude/MEMORY/` for past work and learning (read on demand)
 
 ## Key Rules
 

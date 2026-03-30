@@ -6,11 +6,15 @@ color: "#94A3B8"
 temperature: 0.1
 steps: 20
 permission:
+  read: allow
   edit: deny
   bash:
     "*": deny
     "grep *": allow
     "rg *": allow
+  external_directory:
+    "~/.claude/**": allow
+    "~/.config/opencode/**": allow
 ---
 
 # PAI Intern Agent

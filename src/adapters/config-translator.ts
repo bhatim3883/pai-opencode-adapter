@@ -414,7 +414,6 @@ export function translateConfig(
     external_directory: {
       ...existingExternalDir,
       "~/.claude/**": "allow",
-      "~/.claude/PAI/Algorithm/**": "allow",
       "~/.config/opencode/**": "allow",
       "~/.config/opencode/agents/**": "allow",
     },

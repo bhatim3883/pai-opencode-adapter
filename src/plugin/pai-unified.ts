@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { tool } from "@opencode-ai/plugin";
 import { fileLog } from "../lib/file-logger.js";
 import { emit as eventBusEmit } from "../core/event-bus.js";
 import { isDuplicate, clearSessionDedup } from "../core/dedup-cache.js";
@@ -41,10 +42,15 @@ import {
   syncFromPRD as statuslineSyncFromPRD,
 } from "../handlers/statusline-writer.js";
 import {
+  agentTeamCreate,
   agentTeamDispatch,
+  agentTeamMessage,
   agentTeamStatus,
   agentTeamCollect,
   clearAgentTeamsState,
+  updateTeammateStatusGlobal,
+  type AgentTeamsClient,
+  type SdkSessionClient,
 } from "../handlers/agent-teams.js";
 import {
   onLifecycleSessionStart,
@@ -121,6 +127,25 @@ function safeHandler<T>(name: string, fn: () => T): T | undefined {
  */
 export const PaiPlugin = async (_ctx: unknown) => {
   fileLog(`[pai-unified] plugin initialized: ${PLUGIN_NAME}@${PLUGIN_VERSION}`);
+
+  // Build agent teams client using the SDK client from PluginInput.
+  // IMPORTANT: The SDK client routes requests via Bun's in-process server handler —
+  // OpenCode does NOT bind a real TCP port. Using direct fetch() to serverUrl will
+  // fail with "Unable to connect" because there is no listening socket.
+  // We must use input.client (which has Server.App().fetch wired as its transport).
+  //
+  // The v1 SDK uses `{id}` (not `{sessionID}`) in URL templates. We call all SDK
+  // methods with correct v1 param structure: path: { id }, body: { ... }, query: { ... }.
+  const pluginInput = _ctx as { client?: SdkSessionClient; serverUrl?: URL | string; directory?: string } | undefined;
+  const rawSdkClient = pluginInput?.client as SdkSessionClient | undefined;
+  const sdkClient: AgentTeamsClient | null = rawSdkClient?.session
+    ? { sdkClient: rawSdkClient, directory: pluginInput?.directory }
+    : null;
+  if (sdkClient) {
+    fileLog(`[pai-unified] agent teams client configured (SDK in-process routing)`);
+  } else {
+    fileLog(`[pai-unified] WARNING: no SDK client available, agent teams will be disabled`);
+  }
 
   // Sync agent model assignments from pai-adapter.json into agent .md files.
   // This ensures the `model:` field in each agent's YAML frontmatter matches
@@ -230,6 +255,28 @@ export const PaiPlugin = async (_ctx: unknown) => {
           output as { block?: boolean; reason?: string },
         ),
       );
+
+      // ── Skill/Task invocation logging (proves native OC tools are called) ──
+      const toolNameBefore = String(input.tool ?? input.toolName ?? "");
+      const sidBefore = String(input.sessionID ?? input.sessionId ?? "");
+      const argsBefore = (input.args ?? input.input ?? {}) as Record<string, unknown>;
+
+      if (toolNameBefore === "skill" || toolNameBefore === "Skill") {
+        const skillName = String(argsBefore.name ?? argsBefore.skill ?? "unknown");
+        fileLog(
+          `[skill-tracker] BEFORE skill invocation: name="${skillName}" session=${sidBefore.slice(0, 8)}`,
+          "info",
+        );
+      }
+
+      if (toolNameBefore === "task" || toolNameBefore === "Task") {
+        const subagentType = String(argsBefore.subagent_type ?? argsBefore.type ?? "unknown");
+        const taskDesc = String(argsBefore.description ?? "").slice(0, 60);
+        fileLog(
+          `[skill-tracker] BEFORE task invocation: subagent_type="${subagentType}" desc="${taskDesc}" session=${sidBefore.slice(0, 8)}`,
+          "info",
+        );
+      }
     },
 
     // ── tool.execute.after ───────────────────────────────────
@@ -244,6 +291,28 @@ export const PaiPlugin = async (_ctx: unknown) => {
           output,
         ),
       );
+
+      // ── Skill/Task invocation logging (proves native OC tools are called) ──
+      const toolNameAfter = String(input.tool ?? input.toolName ?? "");
+      const sidAfter = String(input.sessionID ?? input.sessionId ?? "");
+      const argsAfter = (input.args ?? input.input ?? {}) as Record<string, unknown>;
+
+      if (toolNameAfter === "skill" || toolNameAfter === "Skill") {
+        const skillName = String(argsAfter.name ?? argsAfter.skill ?? "unknown");
+        fileLog(
+          `[skill-tracker] AFTER skill invocation: name="${skillName}" session=${sidAfter.slice(0, 8)}`,
+          "info",
+        );
+      }
+
+      if (toolNameAfter === "task" || toolNameAfter === "Task") {
+        const subagentType = String(argsAfter.subagent_type ?? argsAfter.type ?? "unknown");
+        const taskDesc = String(argsAfter.description ?? "").slice(0, 60);
+        fileLog(
+          `[skill-tracker] AFTER task invocation: subagent_type="${subagentType}" desc="${taskDesc}" session=${sidAfter.slice(0, 8)}`,
+          "info",
+        );
+      }
 
       // Voice notification — skip TTS for raw tool names ("bash", "read", etc.)
       // to avoid distracting noise; only route desktop/Discord notifications.
@@ -374,8 +443,11 @@ export const PaiPlugin = async (_ctx: unknown) => {
       }
 
       if (eventType === "session.idle") {
-        const sid = String(evt.sessionID ?? evt.sessionId ?? "");
-        const durationMs = typeof evt.durationMs === "number" ? evt.durationMs : 0;
+        // session.idle payload: { type, properties: { sessionID } }
+        const idleProps = (evt.properties ?? evt) as Record<string, unknown>;
+        const sid = String(idleProps.sessionID ?? idleProps.sessionId ?? evt.sessionID ?? evt.sessionId ?? "");
+        const durationMs = typeof (idleProps.durationMs ?? evt.durationMs) === "number"
+          ? (idleProps.durationMs ?? evt.durationMs) as number : 0;
         safeHandler("voice.idle", () =>
           voiceNotificationHandler(Math.floor(durationMs / 1000), "Session is idle"),
         );
@@ -385,12 +457,29 @@ export const PaiPlugin = async (_ctx: unknown) => {
         if (sid) {
           safeHandler("learning.flush.idle", () => { flushSessionLearnings(sid); });
         }
+
+        // Update agent team teammate status when their session goes idle.
+        // Uses global scan since the event only carries the teammate's session ID,
+        // not the coordinator's.
+        if (sid) {
+          safeHandler("agentTeams.idle", () => {
+            updateTeammateStatusGlobal(sid, "idle");
+          });
+        }
       }
 
       // OpenCode emits "session.created"; Claude Code emits "session.start".
       // Handle both so the greeting fires regardless of runtime.
       if (eventType === "session.start" || eventType === "session.created") {
-        const sid = String(evt.sessionID ?? evt.sessionId ?? "");
+        // session.created payload: { type, properties: { info: Session } }
+        // session.start (Claude Code) payload: { type, sessionID }
+        const startProps = (evt.properties ?? evt) as Record<string, unknown>;
+        const startInfo = startProps.info as Record<string, unknown> | undefined;
+        const sid = String(
+          startInfo?.id ?? startInfo?.sessionID ??
+          startProps.sessionID ?? startProps.sessionId ??
+          evt.sessionID ?? evt.sessionId ?? ""
+        );
         safeHandler("statusline.sessionStart", () => statuslineSessionStart(sid));
         safeHandler("lifecycle.sessionStart", () => onLifecycleSessionStart(sid));
         safeHandler("voice.recordStart", () => recordSessionStart());
@@ -439,7 +528,9 @@ export const PaiPlugin = async (_ctx: unknown) => {
       }
 
       if (eventType === "session.end") {
-        const sid = String(evt.sessionID ?? evt.sessionId ?? "");
+        // session.end payload: { type, properties: { sessionID } }
+        const endProps = (evt.properties ?? evt) as Record<string, unknown>;
+        const sid = String(endProps.sessionID ?? endProps.sessionId ?? evt.sessionID ?? evt.sessionId ?? "");
         safeHandler("terminal.sessionEnd", () => terminalSessionEnd());
         safeHandler("statusline.sessionEnd", () => statuslineSessionEnd(sid));
         safeHandler("lifecycle.sessionEnd", () => onLifecycleSessionEnd(sid));
@@ -467,36 +558,80 @@ export const PaiPlugin = async (_ctx: unknown) => {
 
     // ── tool (custom tools exposed to the LLM) ──────────────
     tool: {
-      agent_team_dispatch: {
-        description: "Dispatch a task to a named agent",
-        parameters: {
-          sessionId: { type: "string" },
-          agent: { type: "string" },
-          task: { type: "string" },
-          context: { type: "string", optional: true },
+      agent_team_create: tool({
+        description: "Create a new agent team for coordinating parallel work",
+        args: {
+          teamName: tool.schema.string().describe("Name for the team"),
         },
-        execute: (params: Record<string, string>) =>
-          agentTeamDispatch(
-            params.sessionId ?? "",
-            params.agent ?? "",
-            params.task ?? "",
-            params.context,
-          ),
-      },
-      agent_team_status: {
-        description: "Get status of all dispatched agents in session",
-        parameters: {
-          sessionId: { type: "string" },
+        execute: async (args, context) => {
+          if (!sdkClient) return JSON.stringify({ success: false, error: "SDK client not available" });
+          const result = await agentTeamCreate(sdkClient, context.sessionID, args.teamName, context.directory);
+          return JSON.stringify(result);
         },
-        execute: (params: Record<string, string>) => agentTeamStatus(params.sessionId ?? ""),
-      },
-      agent_team_collect: {
-        description: "Collect results from completed agent dispatches",
-        parameters: {
-          sessionId: { type: "string" },
+      }),
+      agent_team_dispatch: tool({
+        description: "Dispatch a teammate to work on a task within an agent team",
+        args: {
+          teamName: tool.schema.string().describe("Name of the team"),
+          teammateName: tool.schema.string().describe("Name for this teammate"),
+          task: tool.schema.string().describe("Task description for the teammate"),
+          agent: tool.schema.string().optional().describe("Agent type to use (optional)"),
         },
-        execute: (params: Record<string, string>) => agentTeamCollect(params.sessionId ?? ""),
-      },
+        execute: async (args, context) => {
+          if (!sdkClient) return JSON.stringify({ success: false, error: "SDK client not available" });
+          const result = await agentTeamDispatch(
+            sdkClient,
+            context.sessionID,
+            args.teamName,
+            args.teammateName,
+            args.task,
+            args.agent,
+            context.directory,
+          );
+          return JSON.stringify(result);
+        },
+      }),
+      agent_team_message: tool({
+        description: "Send a message to an existing teammate in an agent team",
+        args: {
+          teamName: tool.schema.string().describe("Name of the team"),
+          teammateName: tool.schema.string().describe("Name of the teammate"),
+          message: tool.schema.string().describe("Message to send"),
+        },
+        execute: async (args, context) => {
+          if (!sdkClient) return JSON.stringify({ success: false, error: "SDK client not available" });
+          const result = await agentTeamMessage(
+            sdkClient,
+            context.sessionID,
+            args.teamName,
+            args.teammateName,
+            args.message,
+            context.directory,
+          );
+          return JSON.stringify(result);
+        },
+      }),
+      agent_team_status: tool({
+        description: "Get status of all agent teams and their teammates",
+        args: {
+          teamName: tool.schema.string().optional().describe("Filter by team name (optional)"),
+        },
+        execute: async (args, context) => {
+          const result = agentTeamStatus(context.sessionID, args.teamName);
+          return JSON.stringify(result);
+        },
+      }),
+      agent_team_collect: tool({
+        description: "Collect results from completed teammate sessions",
+        args: {
+          teamName: tool.schema.string().optional().describe("Filter by team name (optional)"),
+        },
+        execute: async (args, context) => {
+          if (!sdkClient) return JSON.stringify({ success: false, error: "SDK client not available" });
+          const result = await agentTeamCollect(sdkClient, context.sessionID, args.teamName, context.directory);
+          return JSON.stringify(result);
+        },
+      }),
     },
   };
 };

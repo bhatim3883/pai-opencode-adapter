@@ -6,6 +6,7 @@ color: "#22C55E"
 temperature: 0.1
 steps: 30
 permission:
+  read: allow
   edit: deny
   bash:
     "*": deny
@@ -17,6 +18,9 @@ permission:
     "git blame*": allow
     "wc *": allow
   webfetch: deny
+  external_directory:
+    "~/.claude/**": allow
+    "~/.config/opencode/**": allow
 ---
 
 # PAI Explorer Agent

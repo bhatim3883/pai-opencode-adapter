@@ -5,9 +5,13 @@ model: github-copilot/claude-sonnet-4.6
 color: "#F97316"
 temperature: 0.2
 permission:
+  read: allow
   edit: allow
   bash: allow
   webfetch: deny
+  external_directory:
+    "~/.claude/**": allow
+    "~/.config/opencode/**": allow
 ---
 
 # PAI Engineer Agent
