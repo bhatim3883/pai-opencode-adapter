@@ -99,6 +99,32 @@ function isSubagentSession(evt: Record<string, unknown>): boolean {
   return false;
 }
 
+// ── Sub-agent session registry ─────────────────────────────────────
+// Tracks session IDs that belong to sub-agents so we can block voice
+// notifications from them at the tool execution level (bash curl to
+// localhost:8888/notify).  Populated on session.created, cleared on
+// session.end.
+const subagentSessions = new Set<string>();
+
+/**
+ * Check whether a session ID is a known sub-agent session.
+ */
+function isKnownSubagent(sessionId: string): boolean {
+  return subagentSessions.has(sessionId);
+}
+
+/**
+ * Detect whether a bash command is a voice notification curl.
+ * Matches `curl ... localhost:8888/notify` patterns that sub-agents
+ * should never execute.
+ */
+function isVoiceCurlCommand(command: string): boolean {
+  return command.includes("localhost:8888/notify") || command.includes("127.0.0.1:8888/notify");
+}
+
+// Export for testing
+export { subagentSessions as _subagentSessionsForTest };
+
 function safeHandler<T>(name: string, fn: () => T): T | undefined {
   try {
     return fn();
@@ -227,6 +253,33 @@ export const PaiPlugin = async (_ctx: unknown) => {
         ),
       );
 
+      // ── Voice curl blocking for sub-agent sessions ──
+      // Sub-agents inherit CLAUDE.md instructions that tell the LLM to run
+      // voice curl commands (curl -X POST localhost:8888/notify).  Despite
+      // instructions saying "subagents must NOT execute voice curls", LLMs
+      // routinely ignore this.  We enforce it here at the infrastructure
+      // level by blocking bash commands that target the voice proxy.
+      const toolNameForVoiceBlock = String(input.tool ?? input.toolName ?? "");
+      const sidForVoiceBlock = String(input.sessionID ?? input.sessionId ?? "");
+      if (
+        (toolNameForVoiceBlock === "bash" || toolNameForVoiceBlock === "Bash") &&
+        sidForVoiceBlock &&
+        isKnownSubagent(sidForVoiceBlock)
+      ) {
+        const argsForVoiceBlock = (input.args ?? input.input ?? {}) as Record<string, unknown>;
+        const command = String(argsForVoiceBlock.command ?? argsForVoiceBlock.cmd ?? "");
+        if (isVoiceCurlCommand(command)) {
+          fileLog(
+            `[voice-block] Blocked voice curl from sub-agent session ${sidForVoiceBlock.slice(0, 8)}`,
+            "info",
+          );
+          (output as { block?: boolean; reason?: string }).block = true;
+          (output as { block?: boolean; reason?: string }).reason =
+            "Voice notifications are reserved for the primary coordinator session";
+          return;
+        }
+      }
+
       // ── Skill/Task invocation logging (proves native OC tools are called) ──
       const toolNameBefore = String(input.tool ?? input.toolName ?? "");
       const sidBefore = String(input.sessionID ?? input.sessionId ?? "");
@@ -287,11 +340,15 @@ export const PaiPlugin = async (_ctx: unknown) => {
 
       // Voice notification — skip TTS for raw tool names ("bash", "read", etc.)
       // to avoid distracting noise; only route desktop/Discord notifications.
+      // Also skip entirely for sub-agent sessions.
       const durationMs = typeof input.durationMs === "number" ? input.durationMs : 0;
       const summary = String(input.tool ?? input.toolName ?? "tool completed");
-      safeHandler("voice.postTool", () =>
-        routeNotificationByDuration(Math.floor(durationMs / 1000), summary),
-      );
+      const sidForVoice = String(input.sessionID ?? input.sessionId ?? "");
+      if (!isKnownSubagent(sidForVoice)) {
+        safeHandler("voice.postTool", () =>
+          routeNotificationByDuration(Math.floor(durationMs / 1000), summary),
+        );
+      }
 
       // Terminal tab title
       const taskSummary = String(input.tool ?? input.toolName ?? "");
@@ -419,9 +476,12 @@ export const PaiPlugin = async (_ctx: unknown) => {
         const sid = String(idleProps.sessionID ?? idleProps.sessionId ?? evt.sessionID ?? evt.sessionId ?? "");
         const durationMs = typeof (idleProps.durationMs ?? evt.durationMs) === "number"
           ? (idleProps.durationMs ?? evt.durationMs) as number : 0;
-        safeHandler("voice.idle", () =>
-          voiceNotificationHandler(Math.floor(durationMs / 1000), "Session is idle"),
-        );
+        // Only fire voice notification for the coordinator session
+        if (!isKnownSubagent(sid)) {
+          safeHandler("voice.idle", () =>
+            voiceNotificationHandler(Math.floor(durationMs / 1000), "Session is idle"),
+          );
+        }
         safeHandler("statusline.idle", () => statuslinePhaseChange(sid, "IDLE"));
 
         // Flush buffered learnings to disk on idle
@@ -455,7 +515,10 @@ export const PaiPlugin = async (_ctx: unknown) => {
             }
           });
         } else {
-          fileLog(`[pai-unified] sub-agent session detected (${sid}), skipping greeting`);
+          // Register this session as a sub-agent so tool.execute.before can
+          // block voice curls from it later.
+          subagentSessions.add(sid);
+          fileLog(`[pai-unified] sub-agent session registered (${sid}), voice curls will be blocked`);
         }
 
         // First-run detection: check if PAI agents are deployed
@@ -511,6 +574,7 @@ export const PaiPlugin = async (_ctx: unknown) => {
           safeHandler("cleanup.dedup", () => clearSessionDedup(sid));
           safeHandler("cleanup.fallbackState", () => clearFallbackState(sid));
           safeHandler("cleanup.implicitSentiment", () => clearImplicitSentimentState(sid));
+          safeHandler("cleanup.subagentRegistry", () => subagentSessions.delete(sid));
         }
       }
 
