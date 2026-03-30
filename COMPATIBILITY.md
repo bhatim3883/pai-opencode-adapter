@@ -73,7 +73,7 @@ This registry tracks custom implementations that bridge gaps where PAI hooks hav
 | Workaround | Custom Feature | PAI Mechanism | Adapter Implementation | OC Native? | Retire When |
 |------------|----------------|---------------|------------------------|------------|-------------|
 | dedup-cache | Message Deduplication | CC auto-dedup on message send | `src/core/dedup-cache.ts` (5s TTL, session-scoped) | No | OpenCode adds native message dedup API |
-| agent-teams | Agent Team Coordination | CC sub-agent spawning | `src/handlers/agent-teams.ts` (5 custom OC tools: agent_team_create, agent_team_dispatch, agent_team_message, agent_team_status, agent_team_collect) — **real SDK-backed implementation** using `Session.create` (parent/child sessions), `Session.promptAsync` (messaging), and `Session.messages` (result collection) | Yes (via SDK) | OpenCode adds native agent orchestration API that replaces SDK-based adapter implementation |
+| agent-teams | Agent Team Coordination | CC sub-agent spawning | `src/handlers/agent-teams.ts` (5 custom OC tools: `agent_team_create`, `agent_team_dispatch`, `agent_team_message`, `agent_team_status`, `agent_team_collect`) — fire-and-forget session spawning via SDK (`Session.create` + `Session.promptAsync`); in-memory status tracking; text-only result collection via `Session.messages`. **Not equivalent to CC agent teams** — see Known Limitations §7. | Partial | OpenCode adds native agent orchestration API; adapter custom tools would be retired in favour of it |
 | plan-mode | Plan Mode | CC plan mode toggle | `src/handlers/plan-mode.ts` (tool blocking + agent switch on `/plan` command) | No | OpenCode adds plan/edit mode toggle API |
 | statusline | Status Line | CC status hook integration | `src/statusline/statusline.sh` (tmux status-right, reads session state JSON) | No | OpenCode adds TUI status display API |
 | voice-notifications | Voice/TTS | CC voice completion hook | `src/handlers/voice-notifications.ts` (ElevenLabs API, ntfy.sh, Discord webhooks) | No | OpenCode adds native voice output API |
@@ -108,7 +108,7 @@ The following capabilities are provided **natively by OpenCode** and do NOT requ
 | **Task Tool** | `packages/opencode/src/tool/task.ts` | Spawns real sub-agent sessions via `Session.create()` with `parentID`, returns results | Logging only (`[skill-tracker]` in debug log) |
 | **MCP Servers** | `opencode.json` → `"mcp"` key | Native MCP server support; tools appear directly in model's tool list | None — fully native |
 
-**Important:** The adapter's `agent_team_dispatch/status/collect` custom tools are an **optional coordination layer** for tracking dispatches. Real agent spawning happens through OpenCode's native Task tool. The custom tools provide session-scoped dispatch metadata tracking but do not replace or duplicate the Task tool.
+**Note:** The adapter's `agent_team_*` custom tools provide a lightweight coordination layer on top of OpenCode sessions. They are **not a port of CC agent teams** — see Known Limitations §7 for a full gap analysis. The model still uses OpenCode's native Task tool for any in-process sub-agent work; our tools add fire-and-forget dispatch + polling on top of that.
 
 ---
 
@@ -176,13 +176,35 @@ The following features are **not supported** by the adapter:
 
 ---
 
-### 7. Agent team tools use SDK-backed real sessions
+### 7. Agent team tools are not equivalent to CC agent teams
 
-**Implementation:** Agent team tools (`agent_team_create/dispatch/message/status/collect`) create real OpenCode sessions using the SDK client (`Session.create`, `Session.promptAsync`, `Session.messages`).
+**What we implement:**
+- `agent_team_create` — creates a named parent session (with `parentID` + `permission` matching native sub-agent format)
+- `agent_team_dispatch` — creates a child session and sends a prompt via `Session.promptAsync` (fire-and-forget)
+- `agent_team_message` — sends a follow-up prompt to an existing teammate session
+- `agent_team_status` — reads in-memory status (updated when `session.idle` fires for the teammate)
+- `agent_team_collect` — fetches all assistant text parts from a completed teammate session
 
-**Architecture:** Teams are modeled as parent sessions; teammates are child sessions. The adapter manages team/teammate registry and task board state per-coordinator-session. All state is cleared on session end.
+**What CC agent teams provide that we do not:**
 
-**Note:** This is a full implementation of CC-equivalent agent teams, not just a tracking layer. Teammates are real sessions that can execute work autonomously.
+| CC Feature | Our Equivalent | Gap |
+|-----------|---------------|-----|
+| `TaskCreate` / `TaskUpdate` — structured shared task list with assignable owners | In-memory `taskBoard` (string entries, no assignment) | No real task lifecycle |
+| `SendMessage` — bidirectional coordinator↔teammate messaging mid-flight | `agent_team_message` (one-way prompt inject) | No teammate→coordinator replies |
+| Teammates go idle and **wake on `SendMessage`** — multi-turn coordination | Fire-and-forget only; teammates run once and stop | No reactive multi-turn |
+| Worktree isolation per teammate — no file conflicts between parallel agents | No isolation; all teammates share the working directory | Parallel file edits conflict |
+| In-process Task tool — synchronous, result returned inline to coordinator | `promptAsync` + poll; coordinator never receives a return value | No inline result |
+| Task tool spawning in all contexts — any agent can spawn sub-agents | Only the primary coordinator session has the tools registered | No nested teams |
+| Background agent flag (`run_in_background`) | All dispatches are effectively background (fire-and-forget) | No semantic difference |
+
+**Architecture difference:** CC's Task tool is synchronous and in-process — the coordinator blocks until the sub-agent completes and gets the result directly. Our implementation uses `Session.promptAsync` (async HTTP), so the coordinator fires a prompt and must poll `agent_team_status` then call `agent_team_collect` to retrieve results.
+
+**What works well:**
+- Teammates are real OpenCode sessions with correct `parentID` and `permission` — the session hierarchy is valid
+- Teammates can use all OpenCode tools (Bash, Read, Write, MCP, etc.)
+- `agent_team_collect` reliably retrieves completed teammate output as text
+- `agent_team_status` correctly transitions to `idle` when `session.idle` fires
+- Suitable for simple fire-and-forget parallelism where you don't need mid-flight coordination
 
 ---
 
@@ -388,15 +410,17 @@ This adapter was built against the following **17 OpenCode plugin API events**:
 
 ### `tool.definition`
 
-**Purpose:** Register custom tools for agent teams.
+**Purpose:** Register custom tools for agent team coordination.
 
 **Handler:** `src/plugin/pai-unified.ts`
 
 **Tools defined:**
 
-- `agent_team_dispatch` — Dispatch task to named agent
-- `agent_team_status` — Get status of dispatched agents
-- `agent_team_collect` — Collect results from completed agents
+- `agent_team_create` — Create a named team (parent session linked to coordinator)
+- `agent_team_dispatch` — Dispatch a task to a new named teammate session (fire-and-forget)
+- `agent_team_message` — Send a follow-up prompt to an existing teammate
+- `agent_team_status` — Poll in-memory status of all teammates (updated on `session.idle`)
+- `agent_team_collect` — Retrieve completed assistant text from all idle/finished teammates
 
 ---
 
@@ -452,7 +476,7 @@ This adapter was built against the following **17 OpenCode plugin API events**:
 | StatusLine | ✅ Native | ✅ Adapted | Requires tmux |
 | Voice/TTS | ✅ Native | ✅ Adapted | Requires ElevenLabs API key |
 | Plan Mode | ✅ Native | ✅ Adapted | Via `/plan` command |
-| Agent Teams | ✅ Native | ✅ Adapted | Custom OC tools |
+| Agent Teams | ✅ Native (CC) | ⚠️ Partial | Fire-and-forget dispatch only; no task board, no multi-turn, no worktree isolation — see §7 |
 | Session Compaction | ✅ Native | ✅ Adapted | Dual proactive+reactive |
 | Learning Signals | ✅ Native | ✅ Adapted | JSONL logs in `~/.opencode/logs/` |
 | Security Validator | ✅ Native | ✅ Adapted | Tool gating + input sanitization |

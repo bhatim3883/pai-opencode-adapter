@@ -588,19 +588,15 @@ echo $PAI_DIR
 
 ### Agent Teams Not Working
 
-**Symptom**: Multi-agent mode fails
+**Symptom**: `agent_team_create`, `agent_team_dispatch`, or `agent_team_collect` return errors or teammates never complete.
+
+**Note:** The adapter's agent team tools are a **fire-and-forget coordination layer**, not a full port of Claude Code's native agent teams. They do not support multi-turn coordination, shared task boards, worktree isolation, or inline result return. See `COMPATIBILITY.md §7` for the full gap analysis.
 
 **Solutions**:
-1. Add to `opencode.json` (`~/.config/opencode/opencode.json`) env section:
-```json
-{
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  }
-}
-```
-2. Use Claude provider (agent teams are Claude-specific)
-3. Check agent configuration in `PAI/USER/agents/`
+1. Verify the plugin loaded after the last code change — check `~/.local/share/opencode/opencode.db` for your newest sessions, and restart OpenCode if the plugin timestamp is older than your last edit.
+2. If `agent_team_status` shows teammates stuck on `"running"` permanently, check `/tmp/pai-opencode-debug.log` for `updateTeammateStatusGlobal` entries — if `registrySize=0`, the plugin restarted and lost in-memory state.
+3. If `agent_team_collect` returns empty, confirm the teammate status is `"idle"` (not `"running"`) before calling collect.
+4. Agent team tools work with any OpenCode-supported provider — they are not Claude-specific.
 
 ### Notifications Not Arriving
 

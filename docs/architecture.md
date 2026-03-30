@@ -63,7 +63,7 @@ flowchart TB
 | Security Validator | `src/handlers/security-validator.ts` | Tool gating, input sanitization |
 | Compaction Handler | `src/handlers/compaction-handler.ts` | Proactive + reactive compaction |
 | Voice Notifications | `src/handlers/voice-notifications.ts` | ElevenLabs TTS, ntfy, Discord |
-| Agent Teams | `src/handlers/agent-teams.ts` | Dispatch tracking via custom tools (scaffold) |
+| Agent Teams | `src/handlers/agent-teams.ts` | Fire-and-forget session dispatch; in-memory status tracking; text-only collect (partial CC parity — no task board, multi-turn, or worktree isolation) |
 
 ## Additional Components
 
