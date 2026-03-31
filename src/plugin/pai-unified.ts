@@ -61,21 +61,24 @@ import {
   clearFallbackState,
 } from "../lib/model-resolver.js";
 import { syncAgentModels } from "../lib/agent-model-sync.js";
+import { loadEnvFile } from "../handlers/env-loader.js";
 
 const PLUGIN_NAME = "pai-adapter";
-const PLUGIN_VERSION = "0.7.0";
+const PLUGIN_VERSION = "0.9.1";
 
 /**
  * Detect whether a session event belongs to a sub-agent (not the main session).
  *
- * OpenCode sub-agent sessions carry a `parentSessionId` property or an
- * `agentId` that indicates they were spawned by a parent.  We also check
- * the `OPENCODE_AGENT_TASK_ID` env var which mirrors Claude Code's
- * `CLAUDE_CODE_AGENT_TASK_ID` convention.
+ * Primary detection is via the Task-call timing registry (see pendingSubagentSpawns).
+ * This function is a fallback for cases where the timing registry misses a spawn.
+ *
+ * From diagnostic payload logging, we confirmed OpenCode sends `parentID` nested
+ * inside `evt.properties.info` for subagent sessions.  We also check legacy field
+ * names and env vars for forward compatibility.
  */
 function isSubagentSession(evt: Record<string, unknown>): boolean {
-  // 1. Explicit parent reference in the event payload
-  if (evt.parentSessionId || evt.parentSessionID || evt.parent_session_id) {
+  // 1. Explicit parent reference in the event payload (top-level)
+  if (evt.parentSessionId || evt.parentSessionID || evt.parent_session_id || evt.parentID) {
     return true;
   }
 
@@ -87,7 +90,12 @@ function isSubagentSession(evt: Record<string, unknown>): boolean {
   // 3. Properties nested inside event.properties (OpenCode wraps some metadata)
   const props = evt.properties as Record<string, unknown> | undefined;
   if (props) {
-    if (props.parentSessionId || props.parentSessionID || props.agentId || props.agentType) {
+    if (props.parentSessionId || props.parentSessionID || props.agentId || props.agentType || props.parentID) {
+      return true;
+    }
+    // 3b. OpenCode confirmed: parentID is inside event.properties.info
+    const info = props.info as Record<string, unknown> | undefined;
+    if (info && (info.parentID || info.parentSessionId || info.parentSessionID)) {
       return true;
     }
   }
@@ -107,6 +115,19 @@ function isSubagentSession(evt: Record<string, unknown>): boolean {
 // session.end.
 const subagentSessions = new Set<string>();
 
+// ── Task-call timing registry ──────────────────────────────────────
+// When the primary session calls the Task tool, we record a pending
+// spawn.  The NEXT session.created event with a new session ID is
+// causally the spawned sub-agent — we consume the pending entry and
+// register the new session in subagentSessions.
+//
+// This fixes the root cause: isSubagentSession() checks for fields
+// (parentSessionId, agentId, etc.) that OpenCode never sends, so
+// sub-agent detection was completely broken.  The timing registry
+// provides causal detection based on the spawn→create sequence.
+const SPAWN_TIMEOUT_MS = 30_000; // 30 seconds — pending entries expire after this
+const pendingSubagentSpawns = new Map<string, { timestamp: number }[]>();
+
 /**
  * Check whether a session ID is a known sub-agent session.
  */
@@ -125,6 +146,8 @@ function isVoiceCurlCommand(command: string): boolean {
 
 // Export for testing
 export { subagentSessions as _subagentSessionsForTest };
+export { pendingSubagentSpawns as _pendingSubagentSpawnsForTest };
+export { SPAWN_TIMEOUT_MS as _SPAWN_TIMEOUT_MS_FOR_TEST };
 
 function safeHandler<T>(name: string, fn: () => T): T | undefined {
   try {
@@ -144,6 +167,16 @@ function safeHandler<T>(name: string, fn: () => T): T | undefined {
  */
 export const PaiPlugin = async (_ctx: unknown) => {
   fileLog(`[pai-unified] plugin initialized: ${PLUGIN_NAME}@${PLUGIN_VERSION}`);
+
+  // Load PAI environment variables from ~/.config/PAI/.env into process.env.
+  // API keys (SHODAN_API_KEY, APIFY_TOKEN, etc.) are stored there but not
+  // sourced by the shell automatically.  Existing env vars are not overwritten.
+  safeHandler("envLoader", () => {
+    const result = loadEnvFile();
+    if (result.loaded > 0) {
+      fileLog(`[pai-unified] Env loader: ${result.loaded} vars loaded, ${result.skipped} skipped`);
+    }
+  });
 
   // Sync agent model assignments from pai-adapter.json into agent .md files.
   // This ensures the `model:` field in each agent's YAML frontmatter matches
@@ -320,6 +353,26 @@ export const PaiPlugin = async (_ctx: unknown) => {
         (output as { block?: boolean; reason?: string }).reason =
           `Subagents cannot use the ${toolNameForAgentBlock} tool to spawn sub-agents. Perform the work directly yourself, or use the Skill tool to load specialized instructions.`;
         return;
+      }
+
+      // ── Task-call timing registry: record pending spawn ──
+      // When a primary (non-subagent) session calls the Task tool, we
+      // record a pending spawn so the next session.created can be matched
+      // as the spawned sub-agent.  This runs AFTER the subagent block above
+      // so blocked Task calls from subagents don't queue pending spawns.
+      if (
+        sidForAgentBlock &&
+        !isKnownSubagent(sidForAgentBlock) &&
+        (toolNameForAgentBlock === "task" ||
+          toolNameForAgentBlock === "Task")
+      ) {
+        const queue = pendingSubagentSpawns.get(sidForAgentBlock) ?? [];
+        queue.push({ timestamp: Date.now() });
+        pendingSubagentSpawns.set(sidForAgentBlock, queue);
+        fileLog(
+          `[subagent-timing] Pending spawn registered from session ${sidForAgentBlock.slice(0, 8)} (queue depth: ${queue.length})`,
+          "info",
+        );
       }
 
       // ── Skill/Task invocation logging (proves native OC tools are called) ──
@@ -549,7 +602,59 @@ export const PaiPlugin = async (_ctx: unknown) => {
         safeHandler("voice.recordStart", () => recordSessionStart());
 
         // Startup greeting via voice — main session only, skip sub-agents
-        if (!isSubagentSession(evt)) {
+        //
+        // Sub-agent detection strategy (defense-in-depth):
+        // 1. Task-call timing registry: if a pending spawn exists from a
+        //    recent Task tool call, this session is causally the spawned
+        //    sub-agent.  This is the primary detection mechanism.
+        // 2. Event payload inspection (isSubagentSession): checks for
+        //    parentSessionId, agentId, etc.  Currently inert with OpenCode
+        //    but kept as a fallback for future compatibility.
+        // 3. Environment variable check (inside isSubagentSession):
+        //    OPENCODE_AGENT_TASK_ID / CLAUDE_CODE_AGENT_TASK_ID.
+
+        // Diagnostic: log full session.created payload for debugging
+        fileLog(
+          `[subagent-timing] session.created payload: ${JSON.stringify(evt).slice(0, 500)}`,
+          "debug",
+        );
+
+        // Check Task-call timing registry first
+        let detectedAsSubagent = false;
+        const now = Date.now();
+        for (const [parentSid, queue] of pendingSubagentSpawns.entries()) {
+          // Filter out expired entries
+          const validEntries = queue.filter(e => (now - e.timestamp) < SPAWN_TIMEOUT_MS);
+          if (validEntries.length > 0) {
+            // Consume the oldest pending spawn (FIFO)
+            validEntries.shift();
+            if (validEntries.length === 0) {
+              pendingSubagentSpawns.delete(parentSid);
+            } else {
+              pendingSubagentSpawns.set(parentSid, validEntries);
+            }
+            // Register this session as a sub-agent
+            subagentSessions.add(sid);
+            detectedAsSubagent = true;
+            fileLog(
+              `[subagent-timing] Sub-agent session ${sid.slice(0, 8)} detected via Task-call timing from parent ${parentSid.slice(0, 8)}`,
+              "info",
+            );
+            break;
+          } else {
+            // All entries expired — clean up
+            pendingSubagentSpawns.delete(parentSid);
+          }
+        }
+
+        // Fallback: original event-based detection
+        if (!detectedAsSubagent && isSubagentSession(evt)) {
+          subagentSessions.add(sid);
+          detectedAsSubagent = true;
+          fileLog(`[pai-unified] sub-agent session registered via event payload (${sid.slice(0, 8)})`, "info");
+        }
+
+        if (!detectedAsSubagent) {
           safeHandler("voice.greeting", () => {
             const greeting = getStartupGreeting();
             if (greeting) {
@@ -557,10 +662,7 @@ export const PaiPlugin = async (_ctx: unknown) => {
             }
           });
         } else {
-          // Register this session as a sub-agent so tool.execute.before can
-          // block voice curls from it later.
-          subagentSessions.add(sid);
-          fileLog(`[pai-unified] sub-agent session registered (${sid}), voice curls will be blocked`);
+          fileLog(`[pai-unified] sub-agent session registered (${sid.slice(0, 8)}), voice curls will be blocked`);
         }
 
         // First-run detection: check if PAI agents are deployed
@@ -617,15 +719,13 @@ export const PaiPlugin = async (_ctx: unknown) => {
           safeHandler("cleanup.fallbackState", () => clearFallbackState(sid));
           safeHandler("cleanup.implicitSentiment", () => clearImplicitSentimentState(sid));
           safeHandler("cleanup.subagentRegistry", () => subagentSessions.delete(sid));
+          safeHandler("cleanup.pendingSpawns", () => pendingSubagentSpawns.delete(sid));
           safeHandler("cleanup.prdBinding", () => statuslineClearPRDBinding(sid));
         }
       }
 
       safeHandler("eventBus.publish", () => eventBusEmit(eventType, evt));
     },
-
-    // ── tool (custom tools exposed to the LLM) ──────────────
-    tool: {},
   };
 };
 

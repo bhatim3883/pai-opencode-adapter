@@ -453,6 +453,91 @@ else
   info "No skill keys configured — you can create $PAI_ENV_FILE later"
 fi
 
+# ─── STEP 3b: Optional Security & Recon Tools ─────────────────────────────────
+section "Step 3b — Optional Security & Recon Tools"
+
+info "PAI's Security/Recon and OSINT skills use external CLI tools."
+info "These are OPTIONAL — skip if you don't plan to use security skills."
+echo ""
+
+INSTALL_SECTOOLS="n"
+if [[ "$NON_INTERACTIVE" == "false" ]]; then
+  prompt "Install security/recon CLI tools? (nmap, subfinder, httpx, nuclei, shodan, yq, ffmpeg) [y/N]"
+  read -r INSTALL_SECTOOLS
+fi
+
+if [[ "${INSTALL_SECTOOLS,,}" == "y" ]]; then
+  # Homebrew tools
+  for tool_name in nmap yq ffmpeg; do
+    if command -v "$tool_name" &>/dev/null; then
+      success "$tool_name already installed: $(which "$tool_name")"
+    else
+      info "Installing $tool_name via brew..."
+      if brew install "$tool_name" &>/dev/null; then
+        success "$tool_name installed"
+      else
+        warn "Failed to install $tool_name — install manually: brew install $tool_name"
+      fi
+    fi
+  done
+
+  # Go tools (ProjectDiscovery)
+  if command -v go &>/dev/null; then
+    for go_pkg in \
+      "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest:subfinder" \
+      "github.com/projectdiscovery/httpx/cmd/httpx@latest:httpx" \
+      "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest:nuclei"; do
+      pkg_path="${go_pkg%%:*}"
+      tool_name="${go_pkg##*:}"
+      go_bin="$(go env GOPATH)/bin/$tool_name"
+      if [[ -f "$go_bin" ]] || command -v "$tool_name" &>/dev/null; then
+        success "$tool_name already installed"
+      else
+        info "Installing $tool_name via go install (this may take a minute)..."
+        if go install -v "$pkg_path" &>/dev/null; then
+          success "$tool_name installed to $(go env GOPATH)/bin/"
+        else
+          warn "Failed to install $tool_name — install manually: go install $pkg_path"
+        fi
+      fi
+    done
+
+    # Remind about PATH
+    GOPATH_BIN="$(go env GOPATH)/bin"
+    if ! echo "$PATH" | tr ':' '\n' | grep -q "^${GOPATH_BIN}$"; then
+      warn "$(go env GOPATH)/bin is not in your PATH"
+      info "Add this to your shell profile: export PATH=\"\$HOME/go/bin:\$PATH\""
+    fi
+  else
+    warn "Go not installed — skipping subfinder, httpx, nuclei"
+    info "Install Go first: brew install go"
+  fi
+
+  # Python tools (shodan)
+  if command -v shodan &>/dev/null; then
+    success "shodan already installed: $(which shodan)"
+  elif command -v pipx &>/dev/null; then
+    info "Installing shodan via pipx..."
+    if pipx install shodan &>/dev/null; then
+      success "shodan installed via pipx"
+    else
+      warn "Failed to install shodan — install manually: pipx install shodan"
+    fi
+  elif command -v pip3 &>/dev/null; then
+    info "Installing shodan via pip3..."
+    if pip3 install --user shodan &>/dev/null; then
+      success "shodan installed via pip3"
+    else
+      warn "Failed to install shodan — install manually: pip3 install --user shodan"
+    fi
+  else
+    warn "Neither pipx nor pip3 found — skipping shodan CLI"
+  fi
+else
+  info "Skipping security tools — install later with: brew install nmap yq ffmpeg"
+  info "See DEPENDENCIES.md for full list of optional dependencies"
+fi
+
 # ─── STEP 4: Directory Setup ──────────────────────────────────────────────────
 section "Step 4 — Directory Setup"
 
@@ -740,6 +825,57 @@ else
   warn "Commands source directory not found: $COMMANDS_SRC"
 fi
 
+# Deploy PAI protection rules to OpenCode config
+RULES_SRC="$REPO_DIR/src/config/rules"
+RULES_TARGET="$OPENCODE_CONFIG_DIR/rules"
+if [[ -d "$RULES_SRC" ]]; then
+  create_dir "$RULES_TARGET"
+  for rule_file in "$RULES_SRC"/*.md; do
+    if [[ -f "$rule_file" ]]; then
+      rule_name=$(basename "$rule_file")
+      cp "$rule_file" "$RULES_TARGET/$rule_name"
+      CREATED_FILES+=("$RULES_TARGET/$rule_name")
+      success "Deployed rule: $rule_name"
+    fi
+  done
+
+  # Add rules to opencode.json instructions array
+  if command -v jq &>/dev/null && [[ -f "$OPENCODE_CONFIG" ]]; then
+    # Build list of rule file paths relative to config dir
+    RULE_PATHS=()
+    for rule_file in "$RULES_TARGET"/*.md; do
+      if [[ -f "$rule_file" ]]; then
+        RULE_PATHS+=("$rule_file")
+      fi
+    done
+
+    if [[ ${#RULE_PATHS[@]} -gt 0 ]]; then
+      # Add each rule file to the instructions array if not already present
+      for rule_path in "${RULE_PATHS[@]}"; do
+        UPDATED=$(jq --arg path "$rule_path" '
+          if (.instructions | type) == "array" then
+            if (.instructions | index($path)) then .
+            else .instructions += [$path]
+            end
+          else
+            .instructions = [$path]
+          end
+        ' "$OPENCODE_CONFIG") || true
+
+        if [[ -n "$UPDATED" ]]; then
+          echo "$UPDATED" > "$OPENCODE_CONFIG"
+        fi
+      done
+      success "Added PAI protection rules to opencode.json instructions"
+    fi
+  else
+    warn "jq not available or opencode.json missing — add rules to instructions manually"
+    info "  Add to opencode.json: \"instructions\": [\"$RULES_TARGET/pai-protection.md\"]"
+  fi
+else
+  info "No rules to deploy (rules directory not found: $RULES_SRC)"
+fi
+
 # Set PAI theme as default in tui.json if not already set
 TUI_CONFIG="$OPENCODE_CONFIG_DIR/tui.json"
 if [[ ! -f "$TUI_CONFIG" ]]; then
@@ -853,6 +989,54 @@ fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 echo ""
+
+# ─── Dependency Summary ──────────────────────────────────────────────────────
+echo -e "  ${BOLD}${BLUE}Dependency Summary${RESET}"
+echo ""
+echo -e "  ${GRAY}Core tools:${RESET}"
+for cmd in bun node jq rg; do
+  if command -v "$cmd" &>/dev/null; then
+    echo -e "    ${GREEN}✓${RESET} $cmd"
+  else
+    echo -e "    ${RED}✗${RESET} $cmd ${GRAY}(required)${RESET}"
+  fi
+done
+echo ""
+echo -e "  ${GRAY}Optional tools:${RESET}"
+for cmd in pandoc ffmpeg yq nmap; do
+  if command -v "$cmd" &>/dev/null; then
+    echo -e "    ${GREEN}✓${RESET} $cmd"
+  else
+    echo -e "    ${GRAY}○${RESET} $cmd ${GRAY}(not installed)${RESET}"
+  fi
+done
+# Check Go-installed tools in both PATH and ~/go/bin
+GOPATH_BIN="${GOPATH:-$HOME/go}/bin"
+for cmd in subfinder httpx nuclei; do
+  if command -v "$cmd" &>/dev/null || [[ -f "$GOPATH_BIN/$cmd" ]]; then
+    echo -e "    ${GREEN}✓${RESET} $cmd"
+  else
+    echo -e "    ${GRAY}○${RESET} $cmd ${GRAY}(not installed)${RESET}"
+  fi
+done
+if command -v shodan &>/dev/null; then
+  echo -e "    ${GREEN}✓${RESET} shodan"
+else
+  echo -e "    ${GRAY}○${RESET} shodan ${GRAY}(not installed)${RESET}"
+fi
+echo ""
+echo -e "  ${GRAY}API keys (from ~/.config/PAI/.env):${RESET}"
+PAI_ENV_CHECK="${HOME}/.config/PAI/.env"
+if [[ -f "$PAI_ENV_CHECK" ]]; then
+  KEY_COUNT=$(grep -c '^[A-Za-z_]' "$PAI_ENV_CHECK" 2>/dev/null || echo "0")
+  echo -e "    ${GREEN}✓${RESET} ${KEY_COUNT} keys configured"
+else
+  echo -e "    ${GRAY}○${RESET} No .env file found"
+fi
+echo ""
+echo -e "  ${LIGHT_BLUE}See DEPENDENCIES.md for full details${RESET}"
+echo ""
+
 echo -e "${STEEL}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${RESET}"
 echo ""
 

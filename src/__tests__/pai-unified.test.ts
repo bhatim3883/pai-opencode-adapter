@@ -1,5 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import PaiPlugin, { healthCheck, _subagentSessionsForTest } from "../plugin/pai-unified.js";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
+import PaiPlugin, {
+  healthCheck,
+  _subagentSessionsForTest,
+  _pendingSubagentSpawnsForTest,
+  _SPAWN_TIMEOUT_MS_FOR_TEST,
+} from "../plugin/pai-unified.js";
 
 // The plugin is now a function — call it once to get the hooks object
 let hooks: Record<string, unknown>;
@@ -50,16 +55,15 @@ describe("hook registration", () => {
 });
 
 describe("tool registration", () => {
-  it("tool block is present", () => {
-    const tools = hooks["tool"] as Record<string, unknown>;
-    expect(typeof tools).toBe("object");
-  });
-
-  it("each tool has description and execute", () => {
-    const tools = hooks["tool"] as Record<string, { description: string; execute: unknown }>;
-    for (const tool of Object.values(tools)) {
-      expect(typeof tool.description).toBe("string");
-      expect(typeof tool.execute).toBe("function");
+  it("no custom tool block registered (native OpenCode skill tool used instead)", () => {
+    // OpenCode v1.3.0 has a native skill tool built-in that reads SKILL.md files.
+    // The adapter no longer registers a custom skill tool — it relies on the native one.
+    // The `tool` key should either be absent or an empty object.
+    const tools = hooks["tool"] as Record<string, unknown> | undefined;
+    if (tools !== undefined) {
+      expect(Object.keys(tools).length).toBe(0);
+    } else {
+      expect(tools).toBeUndefined();
     }
   });
 });
@@ -77,7 +81,7 @@ describe("healthCheck", () => {
 
   it("returns version", () => {
     const result = healthCheck();
-    expect(result.version).toBe("0.7.0");
+    expect(result.version).toBe("0.9.1");
   });
 });
 
@@ -236,6 +240,11 @@ describe("skill invocation logging", () => {
 });
 
 describe("task invocation logging", () => {
+  afterEach(() => {
+    // Clean up pending spawns created by Task tool.execute.before calls
+    _pendingSubagentSpawnsForTest.delete("test-task-session");
+  });
+
   it("tool.execute.before does not throw when tool is 'task'", async () => {
     const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
     await expect(
@@ -312,6 +321,8 @@ describe("subagent Task tool blocking", () => {
 
   afterAll(() => {
     _subagentSessionsForTest.delete(subagentSid);
+    // Clean up pending spawns from the "does NOT block Task for primary" test
+    _pendingSubagentSpawnsForTest.delete("primary-session-xyz");
   });
 
   it("blocks Task tool for subagent session", async () => {
@@ -425,5 +436,176 @@ describe("subagent preamble injection in system.transform", () => {
     if (algoIdx >= 0) {
       expect(preambleIdx).toBeLessThan(algoIdx);
     }
+  });
+});
+
+describe("Task-call timing registry — subagent detection", () => {
+  const toolBeforeFn = () => hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
+  const eventFn = () => hooks["event"] as (i: unknown) => Promise<void>;
+
+  afterEach(() => {
+    // Clean up all test sessions introduced by this describe block
+    const testSessionPrefixes = [
+      "primary-timing-test",
+      "primary-timing-abc",
+      "primary-timing-multi",
+      "primary-timing-fifo",
+    ];
+    for (const prefix of testSessionPrefixes) {
+      _pendingSubagentSpawnsForTest.delete(prefix);
+      _subagentSessionsForTest.delete(prefix);
+    }
+    _subagentSessionsForTest.delete("spawned-sub-123");
+    _subagentSessionsForTest.delete("spawned-sub-456");
+    _subagentSessionsForTest.delete("spawned-fifo-1");
+    _subagentSessionsForTest.delete("spawned-fifo-2");
+  });
+
+  it("Task tool.execute.before registers pending spawn for primary session", async () => {
+    await toolBeforeFn()(
+      { tool: "Task", sessionID: "primary-timing-test", args: { subagent_type: "engineer" } },
+      {},
+    );
+    const pending = _pendingSubagentSpawnsForTest.get("primary-timing-test");
+    expect(pending).toBeDefined();
+    expect(Array.isArray(pending)).toBe(true);
+    expect(pending!.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("session.created after Task call registers new session as subagent", async () => {
+    // Fire Task from primary session
+    await toolBeforeFn()(
+      { tool: "Task", sessionID: "primary-timing-abc", args: { subagent_type: "engineer" } },
+      {},
+    );
+    // Fire session.created for the newly spawned session
+    await eventFn()({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "spawned-sub-123" } },
+      },
+    });
+    expect(_subagentSessionsForTest.has("spawned-sub-123")).toBe(true);
+  });
+
+  it("pending spawn entry is consumed after matching", async () => {
+    // Fire Task from primary session to queue a pending spawn
+    await toolBeforeFn()(
+      { tool: "Task", sessionID: "primary-timing-abc", args: { subagent_type: "engineer" } },
+      {},
+    );
+    // Fire session.created to consume it
+    await eventFn()({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "spawned-sub-456" } },
+      },
+    });
+    // The entry should be consumed (queue empty or key removed)
+    const pending = _pendingSubagentSpawnsForTest.get("primary-timing-abc");
+    const isEmpty = pending === undefined || pending.length === 0;
+    expect(isEmpty).toBe(true);
+  });
+
+  it("Task from subagent session does NOT register pending spawn", async () => {
+    const subSid = "test-subagent-no-pending-spawn";
+    _subagentSessionsForTest.add(subSid);
+    try {
+      await toolBeforeFn()(
+        { tool: "Task", sessionID: subSid, args: { subagent_type: "engineer" } },
+        {},
+      );
+      // Subagent Task calls are blocked — no pending spawn should be queued
+      const pending = _pendingSubagentSpawnsForTest.get(subSid);
+      const isEmpty = pending === undefined || pending.length === 0;
+      expect(isEmpty).toBe(true);
+    } finally {
+      _subagentSessionsForTest.delete(subSid);
+      _pendingSubagentSpawnsForTest.delete(subSid);
+    }
+  });
+
+  it("multiple Task calls queue multiple pending spawns", async () => {
+    await toolBeforeFn()(
+      { tool: "Task", sessionID: "primary-timing-multi", args: { subagent_type: "engineer" } },
+      {},
+    );
+    await toolBeforeFn()(
+      { tool: "Task", sessionID: "primary-timing-multi", args: { subagent_type: "explorer" } },
+      {},
+    );
+    const pending = _pendingSubagentSpawnsForTest.get("primary-timing-multi");
+    expect(pending).toBeDefined();
+    expect(pending!.length).toBe(2);
+  });
+
+  it("multiple spawned sessions consume pending spawns in FIFO order", async () => {
+    // Queue two pending spawns from the same primary session
+    await toolBeforeFn()(
+      { tool: "Task", sessionID: "primary-timing-fifo", args: { subagent_type: "engineer" } },
+      {},
+    );
+    await toolBeforeFn()(
+      { tool: "Task", sessionID: "primary-timing-fifo", args: { subagent_type: "explorer" } },
+      {},
+    );
+    // Two session.created events consume both pending entries
+    await eventFn()({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "spawned-fifo-1" } },
+      },
+    });
+    await eventFn()({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "spawned-fifo-2" } },
+      },
+    });
+    expect(_subagentSessionsForTest.has("spawned-fifo-1")).toBe(true);
+    expect(_subagentSessionsForTest.has("spawned-fifo-2")).toBe(true);
+  });
+});
+
+describe("Task-call timing registry — spawn expiry", () => {
+  const eventFn = () => hooks["event"] as (i: unknown) => Promise<void>;
+
+  afterEach(() => {
+    _pendingSubagentSpawnsForTest.delete("primary-expired-test");
+    _pendingSubagentSpawnsForTest.delete("primary-fresh-test");
+    _subagentSessionsForTest.delete("session-after-expired");
+    _subagentSessionsForTest.delete("session-after-fresh");
+  });
+
+  it("expired pending spawn is NOT matched to session.created", async () => {
+    // Manually inject a spawn entry that is already past the 30s timeout
+    const expiredTimestamp = Date.now() - (_SPAWN_TIMEOUT_MS_FOR_TEST + 1000);
+    _pendingSubagentSpawnsForTest.set("primary-expired-test", [{ timestamp: expiredTimestamp }]);
+
+    await eventFn()({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "session-after-expired" } },
+      },
+    });
+
+    // The expired entry should NOT have caused the new session to be registered as a subagent
+    expect(_subagentSessionsForTest.has("session-after-expired")).toBe(false);
+  });
+
+  it("non-expired pending spawn IS matched to session.created", async () => {
+    // Manually inject a spawn entry that is within the timeout window (1s ago)
+    const recentTimestamp = Date.now() - 1000;
+    _pendingSubagentSpawnsForTest.set("primary-fresh-test", [{ timestamp: recentTimestamp }]);
+
+    await eventFn()({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "session-after-fresh" } },
+      },
+    });
+
+    // The fresh entry SHOULD have caused the new session to be registered as a subagent
+    expect(_subagentSessionsForTest.has("session-after-fresh")).toBe(true);
   });
 });

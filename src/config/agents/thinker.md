@@ -11,6 +11,14 @@ permission:
     "*": deny
     "grep *": allow
     "rg *": allow
+    "git status*": allow
+    "git log*": allow
+    "git diff*": allow
+    "git show*": allow
+    "git blame*": allow
+    "git branch*": allow
+    "git rev-parse*": allow
+    "git -C *": allow
   webfetch: allow
   external_directory:
     "~/.claude/**": allow

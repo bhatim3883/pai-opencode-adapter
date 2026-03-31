@@ -12,6 +12,9 @@ permission:
     "*": deny
     "grep *": allow
     "rg *": allow
+    "git status*": allow
+    "git log*": allow
+    "git diff*": allow
   external_directory:
     "~/.claude/**": allow
     "~/.config/opencode/**": allow

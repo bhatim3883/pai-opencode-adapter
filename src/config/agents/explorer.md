@@ -12,10 +12,14 @@ permission:
     "*": deny
     "grep *": allow
     "rg *": allow
+    "git status*": allow
     "git log*": allow
     "git show*": allow
     "git diff*": allow
     "git blame*": allow
+    "git branch*": allow
+    "git rev-parse*": allow
+    "git -C *": allow
     "wc *": allow
   webfetch: deny
   external_directory:
