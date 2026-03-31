@@ -1,8 +1,8 @@
 # PAI-OpenCode Adapter
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/anditurdiu/pai-opencode-adapter)
-[![Test Status](https://img.shields.io/badge/tests-546%20pass-green.svg)](https://github.com/anditurdiu/pai-opencode-adapter)
+[![Version](https://img.shields.io/badge/version-0.9.1-blue.svg)](https://github.com/anditurdiu/pai-opencode-adapter)
+[![Test Status](https://img.shields.io/badge/tests-765%20pass-green.svg)](https://github.com/anditurdiu/pai-opencode-adapter)
 
 **Run [PAI](https://github.com/danielmiessler/Personal_AI_Infrastructure) without an Anthropic subscription.** Use any LLM provider — OpenAI, Google, Ollama, or Anthropic — through [OpenCode](https://opencode.ai), the open-source AI coding assistant.
 
@@ -26,11 +26,11 @@ This adapter lets you run the **full PAI experience** on OpenCode with **any LLM
 
 The PAI-OpenCode Adapter is a **plugin adapter layer**, not a fork. It sits between PAI content (hooks, settings, agents) and the OpenCode plugin API, translating events and configurations so your PAI workflows run unchanged on OpenCode.
 
-**What it does:** Event translation (20 PAI hooks → 7 OpenCode hooks), config translation, session state management, security validation, compaction handling, and voice notifications.
+**What it does:** Event translation (20 PAI hooks → 7 OpenCode hooks), config translation, session state management, security validation, compaction handling, voice notifications, and subagent reliability (error detection, model fallback, stall detection, reasoning loop detection).
 
 **What it doesn't do:** Modify PAI source files, add npm dependencies beyond TypeScript, or auto-merge updates.
 
-> 📖 **Detailed docs:** [Architecture](docs/architecture.md) · [Features](docs/features.md) · [Configuration](docs/configuration.md) · [Self-Updater](docs/self-updater.md) · [Troubleshooting](docs/troubleshooting.md)
+> 📖 **Detailed docs:** [Architecture](docs/architecture.md) · [Agents](docs/agents.md) · [Features](docs/features.md) · [Configuration](docs/configuration.md) · [Self-Updater](docs/self-updater.md) · [Troubleshooting](docs/troubleshooting.md)
 
 ---
 
@@ -99,13 +99,18 @@ The adapter deploys PAI-native agents, themes, and commands into OpenCode.
 
 | Agent | Type | Model | Purpose |
 |-------|------|-------|---------|
-| **Algorithm** | Primary (Tab) | Claude Opus 4.6 | Full PAI Algorithm v3.7.0 — structured 7-phase workflow |
+| **Algorithm** | Primary (Tab) | Claude Sonnet 4.6 | Full PAI Algorithm v3.5.0 — structured 7-phase workflow |
 | **Native** | Primary (Tab) | Claude Sonnet 4.6 | Fast, direct task execution without Algorithm overhead |
-| **Research** | Subagent (@) | Gemini 3 Pro | Web research, code analysis, documentation retrieval |
-| **Thinker** | Subagent (@) | Claude Opus 4.6 | Deep reasoning, architecture analysis, tradeoff evaluation |
-| **Explorer** | Subagent (@) | Claude Sonnet 4.6 | Fast read-only codebase exploration |
+| **Architect** | Subagent (@) | Claude Opus 4.6 | System design, architecture review, implementation specs |
+| **Engineer** | Subagent (@) | Claude Sonnet 4.6 | Implementation, bug fixes, refactoring — full file access |
+| **Thinker** | Subagent (@) | Claude Sonnet 4.6 | Deep reasoning, first principles analysis, tradeoff evaluation |
+| **Research** | Subagent (@) | GLM-4.7 | Web research, documentation retrieval, content extraction |
+| **Explorer** | Subagent (@) | GLM-4.7 | Fast read-only codebase exploration, pattern searching |
+| **Intern** | Subagent (@) | GLM-4.7 | Lightweight tasks — data transformation, templating, boilerplate |
 
-Switch between Algorithm and Native with **Tab**. Invoke subagents with **@research**, **@thinker**, or **@explorer**.
+Switch between Algorithm and Native with **Tab**. Invoke subagents with **@architect**, **@engineer**, **@thinker**, **@research**, **@explorer**, or **@intern**.
+
+> 📖 **Full agent reference:** [docs/agents.md](docs/agents.md)
 
 ### Commands
 
@@ -138,7 +143,7 @@ The PAI theme (`pai.json`) provides a dark blue/slate color scheme. Auto-applied
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and PR guidelines.
 
-**Adding a new handler?** Create a handler in `src/handlers/`, register it in `src/plugin/pai-unified.ts`, write tests in `src/__tests__/`, then run `bun test` to verify all 546 tests pass.
+**Adding a new handler?** Create a handler in `src/handlers/`, register it in `src/plugin/pai-unified.ts`, write tests in `src/__tests__/`, then run `bun test` to verify all 765 tests pass.
 
 **Code style:** TypeScript strict, `fileLog()` only (never `console.log`), session-scoped state, adapter pattern (never modify `~/.claude/`).
 
@@ -164,6 +169,29 @@ Both [PAI](https://github.com/danielmiessler/Personal_AI_Infrastructure) and [Op
 
 ## Changelog
 
+### v0.9.1 (2026-03-31)
+
+**Subagent reliability suite:**
+
+- Enhanced error detection — checks top-level error fields AND full Task output body for provider errors
+- Actionable model fallback guidance — injects alternative `subagent_type` suggestions on provider failures
+- Stall detection — 3-minute inactivity heartbeat monitor per subagent, warns primary agent
+- Reasoning loop detection — hashes reasoning text in rolling window, detects repetitive thinking patterns
+- Env-loader — auto-loads API keys from `~/.config/PAI/.env`
+- Skill-loader — native OpenCode skill tool support
+- Agent model sync — `model:` field in agent `.md` files, synced from `pai-adapter.json` on startup
+- PAI protection rule — prevents accidental modification of upstream PAI files
+- 8 agents (added Architect, Engineer, Intern)
+- 765 tests, 0 failures
+
+### v0.7.0 (2026-03-31)
+
+**Subagent context isolation:**
+
+- Subagent preamble injection prevents recursive agent spawning
+- Task tool blocking for subagent sessions (defense-in-depth)
+- Skill tool remains available to subagents for loading workflows
+
 ### v0.1.0 (2026-03-21)
 
 **Initial release:**
@@ -174,7 +202,6 @@ Both [PAI](https://github.com/danielmiessler/Personal_AI_Infrastructure) and [Op
 - Security validator with tool gating
 - Dual compaction strategy (proactive + reactive)
 - Voice notifications (ElevenLabs, ntfy, Discord)
-- Agent teams dispatch tracking scaffold via custom OpenCode tools
 - StatusLine tmux integration
 - Self-updater with draft PR creation
 - File-based logging (never console.log)
