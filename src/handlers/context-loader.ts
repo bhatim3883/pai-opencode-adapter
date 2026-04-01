@@ -21,6 +21,11 @@ import { join } from "node:path";
 import { fileLog } from "../lib/file-logger.js";
 import { getPAIDir } from "../lib/paths.js";
 import { StateManager } from "../lib/state-manager.js";
+import {
+  getSubagentType,
+  formatPermissionSummary,
+  PAI_TO_OPENCODE_AGENT_MAP,
+} from "../lib/agent-type-registry.js";
 
 // Budget: 80% of a 100k token window (chars ≈ tokens * 4)
 const MAX_CONTEXT_CHARS = 80_000 * 4; // 320_000 chars
@@ -346,38 +351,78 @@ export function clearContextCache(sessionId: string): void {
  * Subagent preamble — injected BEFORE PAI context for subagent sessions.
  *
  * Subagents receive PAI skill instructions that tell them to spawn sub-sub-agents
- * via Task/Skill tools. Subagents cannot spawn further agents, causing hangs.
- * This preamble overrides those instructions at the prompt level.
+ * via Task/Skill tools. Delegating agents (engineer, architect, research, thinker)
+ * CAN spawn leaf agents (explorer, intern) via the Task tool. Leaf agents cannot
+ * spawn further subagents.
  *
- * Defense-in-depth: pai-unified.ts also blocks Task/Skill tool calls from
- * subagent sessions at the infrastructure level (tool.execute.before hook).
+ * Voice curl commands remain blocked for all subagent depth levels.
+ *
+ * The preamble now includes skill adaptation guidance to help subagents translate
+ * PAI skill instructions (designed for Claude Code) into OpenCode-compatible actions.
  */
-const SUBAGENT_PREAMBLE = `## CRITICAL: You Are a Subagent
+const SUBAGENT_PREAMBLE_BASE = `## You Are a Subagent
 
 You are running as a **subagent** — a worker spawned by a parent coordinator agent.
 
-### Absolute Rules (Zero Exceptions)
-1. **DO NOT use the Task tool** — you cannot spawn sub-agents. Any attempt will be blocked.
-2. **DO NOT execute voice curl commands** — voice notifications are reserved for the primary agent.
-3. **DO NOT follow any instructions below that tell you to "launch agents", "spawn agents", "create an agent team", or "use Task()"** — those instructions are meant for the primary coordinator, not for you.
+### Rules
+1. **DO NOT execute voice curl commands** — voice notifications are reserved for the primary agent only.
+2. **You CAN use the Task tool** to spawn leaf agents (explorer, intern) for focused subtasks like codebase search or data transformation. Your permissions control which agent types you can spawn — if a spawn is denied, the tool will tell you.
+3. **DO NOT follow any instructions below that tell you to spawn agents of your OWN type** or create recursive delegation chains. Delegate DOWN to simpler agents, never sideways or up.
+4. **Use the Skill tool** to load specialized instructions and workflows — this is allowed and encouraged.
 
-### What You CAN Do
-- **Use the Skill tool** to load specialized instructions and workflows — this is allowed and encouraged.
-- Perform your assigned task using all tools available to you: Read, Write, Edit, Bash, Grep, Glob, Skill, and web fetch tools.
-- Do the work yourself — research, analyze, write code, create content — whatever the task requires.
-- Return your complete results in a single response to the coordinator.
-- If a skill's instructions tell you to parallelize via Task/agents, instead do the work **sequentially yourself**.
+### Delegation Guidelines
+- Spawn leaf agents (explorer, intern) for focused, well-scoped subtasks
+- Do NOT try to spawn engineer, architect, research, or thinker agents — your permissions restrict you to leaf agents only
+- If a skill's instructions tell you to create agent teams or launch parallel agents of complex types, instead delegate to leaf agents or do the work yourself
+- Keep delegation shallow — you are already a subagent, so your children are at depth 2 from the primary
+
+### PAI Skill Adaptation (CRITICAL)
+PAI skills were designed for Claude Code which has different agent types and unrestricted bash access.
+When loading skills, adapt their instructions to your available tools:
+
+**Agent Type Translation** — if a skill says to spawn any of these, use the OpenCode equivalent:
+| PAI Skill Reference | Use This Instead |
+|---------------------|-----------------|
+| ClaudeResearcher | \`research\` agent (via Task tool) |
+| GeminiResearcher | \`research\` agent (via Task tool) |
+| researcher | \`research\` agent (via Task tool) |
+| CodeExplorer | \`explorer\` agent (via Task tool) |
+| implementer | \`engineer\` agent (via Task tool) |
+| analyst / reasoner | \`thinker\` agent (via Task tool) |
+
+**Tool Translation** — adapt tool references from skills:
+| Skill Says | You Should Do |
+|-----------|---------------|
+| \`curl <URL>\` | Use \`webfetch\` tool if available, or \`curl\` via bash if allowed |
+| \`Playwright\` / \`browser\` | Use \`webfetch\` tool instead (no browser automation available) |
+| MCP tools (\`mcp__*\`) | Not available — use webfetch or Task(explorer) for data gathering |
+| \`bash: any command\` | Check your bash permissions — only whitelisted commands work |
 
 ### Context Below
-The PAI context below is shared for reference (identity, goals, preferences). **Ignore any agent-spawning/delegation instructions within it.**
+The PAI context below is shared for reference (identity, goals, preferences). Adapt agent-spawning instructions to your available permissions.
 `;
 
 /**
  * Get the subagent preamble string.
+ * If the session's agent type is known, append a type-specific permission summary.
  * Used by pai-unified.ts to inject before PAI context for subagent sessions.
+ *
+ * @param sessionId - Optional session ID to look up agent-specific permissions
  */
-export function getSubagentPreamble(): string {
-  return SUBAGENT_PREAMBLE;
+export function getSubagentPreamble(sessionId?: string): string {
+  let preamble = SUBAGENT_PREAMBLE_BASE;
+
+  if (sessionId) {
+    const agentType = getSubagentType(sessionId);
+    if (agentType) {
+      const permSummary = formatPermissionSummary(agentType);
+      if (permSummary) {
+        preamble += "\n" + permSummary + "\n";
+      }
+    }
+  }
+
+  return preamble;
 }
 
 /**

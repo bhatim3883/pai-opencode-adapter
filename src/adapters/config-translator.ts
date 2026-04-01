@@ -481,21 +481,16 @@ function writeJsonFileAtomic(filePath: string, data: unknown): void {
 /**
  * Watch settings.json for changes and re-merge with opencode.json + pai-adapter.json
  *
+ * @deprecated Not currently wired into the plugin. Model change detection is now
+ * handled by watchConfigAndSync() in agent-model-sync.ts, which watches pai-adapter.json
+ * directly. This function is kept for potential future use if PAI settings.json syncing
+ * is needed.
+ *
  * @param settingsPath - Path to PAI settings.json
  * @param ocConfigPath - Path to OpenCode opencode.json
  * @param adapterConfigPath - Path to PAI adapter config (pai-adapter.json)
  * @param onUpdate - Optional callback when update occurs
  * @returns Function to stop watching
- *
- * @example
- * const stopWatching = watchAndRemerge(
- *   "~/.claude/settings.json",
- *   "~/.config/opencode/opencode.json",
- *   "~/.config/opencode/pai-adapter.json",
- *   () => {}
- * );
- *
- * // Later: stopWatching();
  */
 export function watchAndRemerge(
   settingsPath: string,

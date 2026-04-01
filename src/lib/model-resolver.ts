@@ -61,6 +61,146 @@ export interface ModelRoutingConfig {
 
 const fallbackState = new Map<string, FallbackSuggestion>();
 
+// ── Provider health tracking ──────────────────────────────
+// When a provider error is detected (rate limit, unavailable, etc.),
+// we mark that provider as unhealthy for a cooldown period. The
+// tool.execute.before hook can then check provider health BEFORE
+// spawning a subagent, preventing OpenCode from entering its
+// infinite internal retry loop (which has no max-retry or circuit
+// breaker).
+//
+// This is the key architectural fix for ROOT CAUSE #2 and #3:
+// instead of an advisory fallback (inject suggestion → hope LLM
+// reads it), we proactively block Task calls that would use an
+// unhealthy provider.
+
+const PROVIDER_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+interface ProviderHealthEntry {
+	provider: string;
+	errorType: ProviderErrorType;
+	markedAt: number;
+	expiresAt: number;
+	errorMessage: string;
+}
+
+const providerHealth = new Map<string, ProviderHealthEntry>();
+
+/**
+ * Mark a provider as unhealthy after a provider error.
+ * The provider will be considered unhealthy for PROVIDER_COOLDOWN_MS.
+ */
+export function markProviderUnhealthy(
+	provider: string,
+	errorType: ProviderErrorType,
+	errorMessage = "",
+): void {
+	const now = Date.now();
+	providerHealth.set(provider, {
+		provider,
+		errorType,
+		markedAt: now,
+		expiresAt: now + PROVIDER_COOLDOWN_MS,
+		errorMessage: errorMessage.slice(0, 200),
+	});
+	fileLog(
+		`[provider-health] Marked provider "${provider}" as unhealthy: ${errorType} (cooldown: ${PROVIDER_COOLDOWN_MS / 1000}s)`,
+		"warn",
+	);
+}
+
+/**
+ * Check whether a provider is currently healthy.
+ * Returns the health entry if unhealthy, null if healthy (or cooldown expired).
+ */
+export function getProviderHealth(provider: string): ProviderHealthEntry | null {
+	const entry = providerHealth.get(provider);
+	if (!entry) return null;
+
+	// Check if cooldown expired
+	if (Date.now() > entry.expiresAt) {
+		providerHealth.delete(provider);
+		fileLog(`[provider-health] Provider "${provider}" cooldown expired, marking healthy`, "info");
+		return null;
+	}
+
+	return entry;
+}
+
+/**
+ * Extract the provider name from a model string like "google/gemini-3-flash-preview".
+ */
+export function extractProvider(modelString: string): string {
+	const slashIndex = modelString.indexOf("/");
+	if (slashIndex === -1) return modelString;
+	return modelString.slice(0, slashIndex);
+}
+
+/**
+ * Check if a subagent type's model uses an unhealthy provider.
+ * Returns guidance for an alternative, or null if the provider is healthy.
+ *
+ * This is the pre-flight check used in tool.execute.before to prevent
+ * Task calls from entering OpenCode's infinite retry loop.
+ */
+export function checkSubagentHealth(subagentType: string): {
+	blocked: true;
+	reason: string;
+	unhealthyProvider: string;
+	unhealthyModel: string;
+	alternatives: Array<{ type: string; model: string }>;
+} | null {
+	const config = getModelConfig();
+	const agents = config.models.agents;
+	if (!agents) return null;
+
+	// Map subagent_type to role (same mapping as agent-model-sync)
+	const typeToRole: Record<string, string> = {
+		intern: "intern",
+		explorer: "explorer",
+		explore: "explorer",
+		research: "explorer",
+		engineer: "engineer",
+		architect: "architect",
+		thinker: "reviewer",
+		general: "engineer",
+	};
+
+	const role = typeToRole[subagentType];
+	if (!role) return null;
+
+	const model = agents[role as keyof typeof agents];
+	if (!model) return null;
+
+	const provider = extractProvider(model);
+	const health = getProviderHealth(provider);
+	if (!health) return null;
+
+	// Provider is unhealthy — find alternatives
+	const altAgentTypes = getAlternativeAgentTypes(subagentType, role as ModelRole);
+	const remainingSec = Math.ceil((health.expiresAt - Date.now()) / 1000);
+
+	return {
+		blocked: true,
+		reason:
+			`Provider "${provider}" is currently unhealthy (${health.errorType}, ` +
+			`cooldown: ${remainingSec}s remaining). Model: ${model}. ` +
+			(altAgentTypes.length > 0
+				? `Use an alternative subagent_type: ${altAgentTypes.map(a => `"${a.type}" (${a.model})`).join(", ")}`
+				: `No alternative agents available. Perform the work directly yourself.`),
+		unhealthyProvider: provider,
+		unhealthyModel: model,
+		alternatives: altAgentTypes,
+	};
+}
+
+/**
+ * Clear provider health state. Called for testing.
+ */
+export function clearProviderHealth(): void {
+	providerHealth.clear();
+}
+
 /**
  * Store a fallback suggestion after a provider error.
  * Called from tool.execute.after when an agent/Task call fails.

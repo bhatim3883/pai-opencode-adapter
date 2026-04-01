@@ -13,10 +13,10 @@
  * @module lib/agent-model-sync
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync, watch, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fileLog } from "./file-logger.js";
-import { getConfigDir } from "./paths.js";
+import { getConfigDir, getAdapterConfigPath } from "./paths.js";
 import { getModelConfig, type ModelRole } from "./model-resolver.js";
 
 // ── Agent → Role Mapping ─────────────────────────────────
@@ -209,4 +209,112 @@ export function syncAgentModels(): SyncResult {
 	}
 
 	return result;
+}
+
+// ── Config File Watcher ──────────────────────────────────
+
+let configWatcher: ReturnType<typeof watch> | null = null;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const DEBOUNCE_MS = 500;
+
+/**
+ * Debounced sync handler — shared by both "change" and "rename" events.
+ * Triggers syncAgentModels() after a 500ms quiet period.
+ */
+function debouncedSync(): void {
+	if (debounceTimer) {
+		clearTimeout(debounceTimer);
+	}
+	debounceTimer = setTimeout(() => {
+		debounceTimer = null;
+		fileLog("[agent-model-sync] Config change detected, re-syncing agent models", "info");
+		try {
+			const result = syncAgentModels();
+			if (result.synced.length > 0) {
+				fileLog(
+					`[agent-model-sync] Re-sync result: ${result.synced.join(", ")}`,
+					"info",
+				);
+			}
+			if (result.errors.length > 0) {
+				fileLog(
+					`[agent-model-sync] Re-sync errors: ${result.errors.join(", ")}`,
+					"warn",
+				);
+			}
+		} catch (err) {
+			fileLog(`[agent-model-sync] Re-sync failed: ${err}`, "error");
+		}
+	}, DEBOUNCE_MS);
+}
+
+/**
+ * Watch pai-adapter.json for changes and trigger syncAgentModels() on change.
+ *
+ * Watches the PARENT DIRECTORY rather than the file itself. This is critical
+ * on macOS because `fs.watch` uses kqueue, which watches the file's inode.
+ * When editors like VS Code save via write-to-temp + rename (atomic write),
+ * the original inode is replaced, silently killing a file-level watcher.
+ * Directory-level watching catches both "change" (in-place edits) and
+ * "rename" (atomic write replacements) for the target filename.
+ *
+ * Uses debouncing (500ms) to avoid thrashing when editors trigger multiple
+ * fs.watch events for a single save.
+ *
+ * @returns A stop function to close the watcher
+ */
+export function watchConfigAndSync(): () => void {
+	const configPath = getAdapterConfigPath();
+	const configDir = dirname(configPath);
+	const configFilename = basename(configPath);
+
+	if (!existsSync(configPath)) {
+		fileLog("[agent-model-sync] Config file not found, skipping watcher", "warn");
+		return () => {};
+	}
+
+	if (configWatcher) {
+		fileLog("[agent-model-sync] Watcher already active, skipping", "debug");
+		return () => { stopConfigWatcher(); };
+	}
+
+	try {
+		// Watch the parent directory and filter for our config filename.
+		// This survives atomic writes (write-to-temp + rename) on macOS
+		// because the directory inode persists even when file inodes change.
+		configWatcher = watch(configDir, (eventType, filename) => {
+			// filename may be null on some platforms; filter for our target
+			if (filename && filename !== configFilename) {
+				return;
+			}
+			// Both "change" (in-place write) and "rename" (atomic write)
+			// indicate the config file was modified. Debounce both.
+			if (eventType === "change" || eventType === "rename") {
+				debouncedSync();
+			}
+		});
+
+		fileLog(`[agent-model-sync] Watching config directory for changes: ${configDir} (file: ${configFilename})`, "info");
+	} catch (err) {
+		fileLog(`[agent-model-sync] Failed to start config watcher: ${err}`, "error");
+		configWatcher = null;
+		return () => {};
+	}
+
+	return stopConfigWatcher;
+}
+
+/**
+ * Stop the config file watcher.
+ */
+function stopConfigWatcher(): void {
+	if (debounceTimer) {
+		clearTimeout(debounceTimer);
+		debounceTimer = null;
+	}
+	if (configWatcher) {
+		configWatcher.close();
+		configWatcher = null;
+		fileLog("[agent-model-sync] Config watcher stopped", "info");
+	}
 }

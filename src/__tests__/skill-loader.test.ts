@@ -9,8 +9,8 @@
  *   - execute(): list mode, path-traversal rejection, not-found error
  */
 
-import { describe, it, expect } from "bun:test";
-import { readdirSync, existsSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { readdirSync, existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import {
   resolveSkillPath,
@@ -18,6 +18,11 @@ import {
   listSkills,
   createSkillTool,
 } from "../handlers/skill-loader.js";
+import {
+  registerSubagentType,
+  clearSubagentType,
+  formatPermissionSummary,
+} from "../lib/agent-type-registry.js";
 import type { ToolContext } from "@opencode-ai/plugin";
 
 // ── Minimal ToolContext mock ──────────────────────────────────────────────────
@@ -32,6 +37,22 @@ const mockCtx: ToolContext = {
   metadata: () => {},
   ask: async () => {},
 };
+
+/**
+ * Create a ToolContext mock with a specific session ID.
+ */
+function mockCtxForSession(sessionId: string, agent = "test-agent"): ToolContext {
+  return {
+    sessionID: sessionId,
+    messageID: "test-message",
+    agent,
+    directory: "/tmp",
+    worktree: "/tmp",
+    abort: new AbortController().signal,
+    metadata: () => {},
+    ask: async () => {},
+  };
+}
 
 // ── resolveSkillPath ──────────────────────────────────────────────────────────
 
@@ -255,5 +276,184 @@ describe("skill tool execute — normal mode (requires installed skills)", () =>
     expect(result.length).toBeGreaterThan(0);
     // Should NOT be an error string
     expect(result).not.toMatch(/^Error:/);
+  });
+});
+
+// ── execute() — subagent permission context injection ─────────────────────
+
+describe("skill tool execute — subagent permission context injection", () => {
+  const subagentSessionId = "subagent-research-session-001";
+
+  beforeEach(() => {
+    registerSubagentType(subagentSessionId, "research");
+  });
+
+  afterEach(() => {
+    clearSubagentType(subagentSessionId);
+  });
+
+  it("appends permission context when loaded by a registered subagent", async () => {
+    const skillPath = resolveSkillPath("Research");
+    if (skillPath === null) return; // skip if Research not installed
+
+    const toolDef = createSkillTool();
+    const ctx = mockCtxForSession(subagentSessionId);
+    const result = await toolDef.execute({ name: "Research" }, ctx);
+
+    // Should contain original skill content
+    expect(result).not.toMatch(/^Error:/);
+    expect(result.length).toBeGreaterThan(0);
+
+    // Should contain the appended permission context
+    expect(result).toContain("OpenCode Adaptation Notes");
+    expect(result).toContain("research agent");
+    expect(result).toContain("Available Tools");
+  });
+
+  it("does NOT append permission context for non-subagent sessions", async () => {
+    const skillPath = resolveSkillPath("Research");
+    if (skillPath === null) return; // skip if Research not installed
+
+    const toolDef = createSkillTool();
+    // Use a session ID that's NOT registered as a subagent
+    const ctx = mockCtxForSession("main-session-not-subagent");
+    const result = await toolDef.execute({ name: "Research" }, ctx);
+
+    // Should contain original skill content
+    expect(result).not.toMatch(/^Error:/);
+
+    // Should NOT contain adaptation notes
+    expect(result).not.toContain("OpenCode Adaptation Notes");
+  });
+
+  it("includes agent type mapping table in appended context", async () => {
+    const skillPath = resolveSkillPath("Research");
+    if (skillPath === null) return;
+
+    const toolDef = createSkillTool();
+    const ctx = mockCtxForSession(subagentSessionId);
+    const result = await toolDef.execute({ name: "Research" }, ctx);
+
+    expect(result).toContain("Agent Type Mapping");
+    expect(result).toContain("ClaudeResearcher");
+    expect(result).toContain("GeminiResearcher");
+  });
+
+  it("includes tool availability table with correct permissions for research", async () => {
+    const skillPath = resolveSkillPath("Research");
+    if (skillPath === null) return;
+
+    const toolDef = createSkillTool();
+    const ctx = mockCtxForSession(subagentSessionId);
+    const result = await toolDef.execute({ name: "Research" }, ctx);
+
+    // Research agent: curl ✅, webfetch ✅, edit ❌
+    expect(result).toContain("curl");
+    expect(result).toContain("webfetch");
+    expect(result).toContain("edit");
+  });
+
+  it("appends context after skill content (separated by ---)", async () => {
+    const skillPath = resolveSkillPath("Research");
+    if (skillPath === null) return;
+
+    const toolDef = createSkillTool();
+    const ctx = mockCtxForSession(subagentSessionId);
+    const result = await toolDef.execute({ name: "Research" }, ctx);
+
+    // The permission context should be after a --- separator
+    const separatorIndex = result.lastIndexOf("\n\n---\n\n");
+    expect(separatorIndex).toBeGreaterThan(0);
+
+    // Content before separator should be the skill content
+    const beforeSeparator = result.slice(0, separatorIndex);
+    expect(beforeSeparator.length).toBeGreaterThan(0);
+
+    // Content after separator should be the adaptation notes
+    const afterSeparator = result.slice(separatorIndex + 7); // "\n\n---\n\n" is 7 chars
+    expect(afterSeparator).toContain("OpenCode Adaptation Notes");
+  });
+
+  it("works correctly for thinker agent type", async () => {
+    const thinkerSessionId = "subagent-thinker-session-001";
+    registerSubagentType(thinkerSessionId, "thinker");
+
+    const skillPath = resolveSkillPath("Research");
+    if (skillPath === null) {
+      clearSubagentType(thinkerSessionId);
+      return;
+    }
+
+    const toolDef = createSkillTool();
+    const ctx = mockCtxForSession(thinkerSessionId);
+    const result = await toolDef.execute({ name: "Research" }, ctx);
+
+    expect(result).toContain("thinker agent");
+    expect(result).toContain("OpenCode Adaptation Notes");
+
+    clearSubagentType(thinkerSessionId);
+  });
+
+  it("does not append context for list mode even with subagent session", async () => {
+    const toolDef = createSkillTool();
+    const ctx = mockCtxForSession(subagentSessionId);
+    const result = await toolDef.execute({ name: "list" }, ctx);
+
+    // List mode should return skill list without permission context
+    expect(result).toContain("Available PAI Skills");
+    expect(result).not.toContain("OpenCode Adaptation Notes");
+  });
+});
+
+// ── research agent curl allow rule ────────────────────────────────────────
+
+describe("research agent curl allow rule", () => {
+  const agentConfigPath = join(
+    process.env.HOME ?? "",
+    ".config",
+    "opencode",
+    "agents",
+    "research.md",
+  );
+
+  it("research.md exists", () => {
+    expect(existsSync(agentConfigPath)).toBe(true);
+  });
+
+  it("research.md contains curl allow rule in bash permissions", () => {
+    const content = readFileSync(agentConfigPath, "utf-8");
+    // Should contain "curl *": allow pattern
+    expect(content).toContain('"curl *": allow');
+  });
+
+  it("research.md retains default deny for unwhitelisted bash", () => {
+    const content = readFileSync(agentConfigPath, "utf-8");
+    expect(content).toContain('"*": deny');
+  });
+
+  it("thinker.md contains curl allow rule", () => {
+    const thinkerPath = join(
+      process.env.HOME ?? "",
+      ".config",
+      "opencode",
+      "agents",
+      "thinker.md",
+    );
+    if (!existsSync(thinkerPath)) return;
+    const content = readFileSync(thinkerPath, "utf-8");
+    expect(content).toContain('"curl *": allow');
+  });
+
+  it("architect.md contains curl allow rule", () => {
+    const architectPath = join(
+      process.env.HOME ?? "",
+      ".config",
+      "opencode",
+      "agents",
+      "architect.md",
+    );
+    if (!existsSync(architectPath)) return;
+    const content = readFileSync(architectPath, "utf-8");
+    expect(content).toContain('"curl *": allow');
   });
 });

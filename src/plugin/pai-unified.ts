@@ -13,6 +13,10 @@ import {
 } from "../handlers/security-validator.js";
 import { contextLoaderHandler, clearContextCache, getSubagentPreamble } from "../handlers/context-loader.js";
 import {
+  registerSubagentType,
+  clearSubagentType,
+} from "../lib/agent-type-registry.js";
+import {
   planModePermissionHandler,
   planModeMessageHandler,
   isPlanModeActive,
@@ -60,12 +64,15 @@ import {
   classifyProviderError,
   setFallbackSuggestion,
   clearFallbackState,
+  markProviderUnhealthy,
+  checkSubagentHealth,
+  extractProvider,
 } from "../lib/model-resolver.js";
-import { syncAgentModels } from "../lib/agent-model-sync.js";
+import { syncAgentModels, watchConfigAndSync } from "../lib/agent-model-sync.js";
 import { loadEnvFile } from "../handlers/env-loader.js";
 
 const PLUGIN_NAME = "pai-adapter";
-const PLUGIN_VERSION = "0.9.1";
+const PLUGIN_VERSION = "0.10.0";
 
 /**
  * Detect whether a session event belongs to a sub-agent (not the main session).
@@ -333,20 +340,28 @@ function isVoiceCurlCommand(command: string): boolean {
   return command.includes("localhost:8888/notify") || command.includes("127.0.0.1:8888/notify");
 }
 
-// Export for testing
-export { subagentSessions as _subagentSessionsForTest };
-export { pendingSubagentSpawns as _pendingSubagentSpawnsForTest };
-export { subagentTracking as _subagentTrackingForTest };
-export { SPAWN_TIMEOUT_MS as _SPAWN_TIMEOUT_MS_FOR_TEST };
-export { STALL_TIMEOUT_MS as _STALL_TIMEOUT_MS_FOR_TEST };
-export { getStalledSubagentWarnings as _getStalledSubagentWarningsForTest };
-export { loopDetectionState as _loopDetectionStateForTest };
-export { LOOP_WINDOW_SIZE as _LOOP_WINDOW_SIZE_FOR_TEST };
-export { LOOP_REPEAT_THRESHOLD as _LOOP_REPEAT_THRESHOLD_FOR_TEST };
-export { LOOP_CHUNK_MIN_LENGTH as _LOOP_CHUNK_MIN_LENGTH_FOR_TEST };
-export { recordReasoningChunk as _recordReasoningChunkForTest };
-export { getLoopingSubagentWarnings as _getLoopingSubagentWarningsForTest };
-export { hashReasoningChunk as _hashReasoningChunkForTest };
+// ── Test internals ─────────────────────────────────────────────────
+// Bundled into a single named export so test-only symbols don't pollute
+// the module's top-level namespace.  OpenCode's plugin loader iterates
+// over all exports looking for plugin functions — exporting Sets, Maps,
+// and numbers at the top level caused the loader to call a Set as a
+// function: "fn5 is not a function. (In 'fn5(input)', 'fn5' is an
+// instance of Set)".
+export const __testInternals = {
+  subagentSessions,
+  pendingSubagentSpawns,
+  subagentTracking,
+  SPAWN_TIMEOUT_MS,
+  STALL_TIMEOUT_MS,
+  getStalledSubagentWarnings,
+  loopDetectionState,
+  LOOP_WINDOW_SIZE,
+  LOOP_REPEAT_THRESHOLD,
+  LOOP_CHUNK_MIN_LENGTH,
+  recordReasoningChunk,
+  getLoopingSubagentWarnings,
+  hashReasoningChunk,
+};
 
 function safeHandler<T>(name: string, fn: () => T): T | undefined {
   try {
@@ -387,6 +402,11 @@ export const PaiPlugin = async (_ctx: unknown) => {
       fileLog(`[pai-unified] Agent models synced: ${result.synced.join(", ")}`);
     }
   });
+
+  // Watch pai-adapter.json for changes and re-sync agent models automatically.
+  // This catches model changes made while OpenCode is running, so the .md files
+  // are already correct on the next restart (fixes the "first restart" race condition).
+  const stopConfigWatcher = safeHandler("agentModelSync.watcher", () => watchConfigAndSync()) ?? (() => {});
 
   return {
     // ── permission.ask ──────────────────────────────────────
@@ -457,7 +477,7 @@ export const PaiPlugin = async (_ctx: unknown) => {
       if (sid && isKnownSubagent(sid)) {
         safeHandler("subagent.preamble", () => {
           const systemArr = (output as { system: string[] }).system;
-          systemArr.push(getSubagentPreamble());
+          systemArr.push(getSubagentPreamble(sid));
           fileLog(
             `[subagent-context] Injected subagent preamble for session ${sid.slice(0, 8)}`,
             "info",
@@ -549,39 +569,18 @@ export const PaiPlugin = async (_ctx: unknown) => {
         }
       }
 
-      // ── Task tool blocking for sub-agent sessions ──
-      // Sub-agents receive PAI skill instructions that tell them to spawn
-      // sub-sub-agents via Task tool. Since subagents can't spawn further
-      // agents, these calls would hang. We block them here with a helpful
-      // message, mirroring the voice curl blocking pattern above.
-      // NOTE: Skill tool is NOT blocked — subagents can and should load
-      // skill instructions to guide their work.
+      // ── Task-call timing registry: record pending spawn ──
+      // When ANY session (primary or subagent) calls the Task tool, we
+      // record a pending spawn so the next session.created can be matched
+      // as the spawned sub/sub-sub-agent.  Delegating subagents (engineer,
+      // architect, research, thinker) are allowed to spawn leaf agents
+      // (explorer, intern) per the 2-level nesting model.  Permission
+      // enforcement is handled by OpenCode's agent permission system, not
+      // by runtime blocking here.
       const toolNameForAgentBlock = String(input.tool ?? input.toolName ?? "");
       const sidForAgentBlock = String(input.sessionID ?? input.sessionId ?? "");
       if (
         sidForAgentBlock &&
-        isKnownSubagent(sidForAgentBlock) &&
-        (toolNameForAgentBlock === "task" ||
-          toolNameForAgentBlock === "Task")
-      ) {
-        fileLog(
-          `[agent-block] Blocked ${toolNameForAgentBlock} call from sub-agent session ${sidForAgentBlock.slice(0, 8)}`,
-          "info",
-        );
-        (output as { block?: boolean; reason?: string }).block = true;
-        (output as { block?: boolean; reason?: string }).reason =
-          `Subagents cannot use the ${toolNameForAgentBlock} tool to spawn sub-agents. Perform the work directly yourself, or use the Skill tool to load specialized instructions.`;
-        return;
-      }
-
-      // ── Task-call timing registry: record pending spawn ──
-      // When a primary (non-subagent) session calls the Task tool, we
-      // record a pending spawn so the next session.created can be matched
-      // as the spawned sub-agent.  This runs AFTER the subagent block above
-      // so blocked Task calls from subagents don't queue pending spawns.
-      if (
-        sidForAgentBlock &&
-        !isKnownSubagent(sidForAgentBlock) &&
         (toolNameForAgentBlock === "task" ||
           toolNameForAgentBlock === "Task")
       ) {
@@ -599,6 +598,34 @@ export const PaiPlugin = async (_ctx: unknown) => {
           `[subagent-timing] Pending spawn registered from session ${sidForAgentBlock.slice(0, 8)} (queue depth: ${queue.length}, type: ${spawnSubagentType})`,
           "info",
         );
+
+        // ── Provider health pre-flight check ──
+        // Before spawning a subagent, check if its model's provider is
+        // currently unhealthy (recently failed with rate_limit, unavailable,
+        // etc.). If so, BLOCK the Task call and return an error with
+        // guidance for an alternative subagent_type.
+        //
+        // This prevents OpenCode's infinite internal retry loop (ROOT CAUSE
+        // #2) — instead of spawning a subagent that will retry a broken
+        // provider for hours, we fail fast and tell the LLM to use an
+        // alternative immediately.
+        const healthCheck = safeHandler("provider.healthCheck", () =>
+          checkSubagentHealth(spawnSubagentType),
+        );
+        if (healthCheck) {
+          fileLog(
+            `[provider-health] BLOCKED Task call for subagent "${spawnSubagentType}": ${healthCheck.reason}`,
+            "warn",
+          );
+          (output as { block?: boolean; reason?: string }).block = true;
+          (output as { block?: boolean; reason?: string }).reason = healthCheck.reason;
+          // Remove the pending spawn since we blocked it
+          queue.pop();
+          if (queue.length === 0) {
+            pendingSubagentSpawns.delete(sidForAgentBlock);
+          }
+          return;
+        }
       }
 
       // ── Skill/Task invocation logging (proves native OC tools are called) ──
@@ -724,6 +751,16 @@ export const PaiPlugin = async (_ctx: unknown) => {
               const argsForFallback = (input.args ?? input.input ?? {}) as Record<string, unknown>;
               const subagentType = String(argsForFallback.subagent_type ?? argsForFallback.type ?? "");
               setFallbackSuggestion(sid, failedModel || subagentType || toolName, errorType, undefined, subagentType || undefined);
+
+              // Mark the provider as unhealthy so future Task calls that
+              // use this provider get blocked proactively (preventing
+              // OpenCode's infinite retry loop).
+              const modelForProvider = failedModel || subagentType || "";
+              const provider = extractProvider(modelForProvider);
+              if (provider) {
+                markProviderUnhealthy(provider, errorType, source.slice(0, 200));
+              }
+
               fileLog(
                 `[model-fallback] Provider error detected: type=${errorType} model=${failedModel} subagent=${subagentType} source=${source.slice(0, 120)}`,
                 "info",
@@ -911,6 +948,9 @@ export const PaiPlugin = async (_ctx: unknown) => {
               stallWarned: false,
             });
 
+            // Register in shared agent-type-registry for cross-module access
+            registerSubagentType(sid, detectedSpawnInfo?.subagentType ?? "unknown");
+
             fileLog(
               `[subagent-timing] Sub-agent session ${sid.slice(0, 8)} detected via Task-call timing from parent ${parentSid.slice(0, 8)} (type: ${detectedSpawnInfo?.subagentType ?? "unknown"})`,
               "info",
@@ -934,6 +974,17 @@ export const PaiPlugin = async (_ctx: unknown) => {
             const greeting = getStartupGreeting();
             if (greeting) {
               speakText(greeting);
+            }
+          });
+
+          // Defensive re-sync agent models on primary session start.
+          // OpenCode may cache agent configs at startup before plugins initialize,
+          // so the init-time sync may not take effect. Re-syncing here ensures
+          // the .md files are correct for any subsequent session/restart.
+          safeHandler("agentModelSync.sessionStart", () => {
+            const result = syncAgentModels();
+            if (result.synced.length > 0) {
+              fileLog(`[pai-unified] Session-start re-sync: ${result.synced.join(", ")}`);
             }
           });
         } else {
@@ -1014,6 +1065,7 @@ export const PaiPlugin = async (_ctx: unknown) => {
           safeHandler("cleanup.loopDetection", () => loopDetectionState.delete(sid));
           safeHandler("cleanup.pendingSpawns", () => pendingSubagentSpawns.delete(sid));
           safeHandler("cleanup.prdBinding", () => statuslineClearPRDBinding(sid));
+          safeHandler("cleanup.agentTypeRegistry", () => clearSubagentType(sid));
         }
       }
 

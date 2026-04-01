@@ -1,20 +1,25 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from "bun:test";
 import PaiPlugin, {
   healthCheck,
-  _subagentSessionsForTest,
-  _pendingSubagentSpawnsForTest,
-  _subagentTrackingForTest,
-  _SPAWN_TIMEOUT_MS_FOR_TEST,
-  _STALL_TIMEOUT_MS_FOR_TEST,
-  _getStalledSubagentWarningsForTest,
-  _loopDetectionStateForTest,
-  _LOOP_WINDOW_SIZE_FOR_TEST,
-  _LOOP_REPEAT_THRESHOLD_FOR_TEST,
-  _LOOP_CHUNK_MIN_LENGTH_FOR_TEST,
-  _recordReasoningChunkForTest,
-  _getLoopingSubagentWarningsForTest,
-  _hashReasoningChunkForTest,
+  __testInternals,
 } from "../plugin/pai-unified.js";
+
+// Destructure test internals from the bundled object
+const {
+  subagentSessions: _subagentSessionsForTest,
+  pendingSubagentSpawns: _pendingSubagentSpawnsForTest,
+  subagentTracking: _subagentTrackingForTest,
+  SPAWN_TIMEOUT_MS: _SPAWN_TIMEOUT_MS_FOR_TEST,
+  STALL_TIMEOUT_MS: _STALL_TIMEOUT_MS_FOR_TEST,
+  getStalledSubagentWarnings: _getStalledSubagentWarningsForTest,
+  loopDetectionState: _loopDetectionStateForTest,
+  LOOP_WINDOW_SIZE: _LOOP_WINDOW_SIZE_FOR_TEST,
+  LOOP_REPEAT_THRESHOLD: _LOOP_REPEAT_THRESHOLD_FOR_TEST,
+  LOOP_CHUNK_MIN_LENGTH: _LOOP_CHUNK_MIN_LENGTH_FOR_TEST,
+  recordReasoningChunk: _recordReasoningChunkForTest,
+  getLoopingSubagentWarnings: _getLoopingSubagentWarningsForTest,
+  hashReasoningChunk: _hashReasoningChunkForTest,
+} = __testInternals;
 
 // The plugin is now a function — call it once to get the hooks object
 let hooks: Record<string, unknown>;
@@ -331,29 +336,37 @@ describe("subagent Task tool blocking", () => {
 
   afterAll(() => {
     _subagentSessionsForTest.delete(subagentSid);
-    // Clean up pending spawns from the "does NOT block Task for primary" test
+    // Clean up pending spawns from Task tool tests
     _pendingSubagentSpawnsForTest.delete("primary-session-xyz");
+    _pendingSubagentSpawnsForTest.delete(subagentSid);
   });
 
-  it("blocks Task tool for subagent session", async () => {
+  it("allows Task tool for subagent session (registers pending spawn)", async () => {
     const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
     const output: { block?: boolean; reason?: string } = {};
     await fn(
-      { tool: "Task", sessionID: subagentSid, args: { subagent_type: "engineer", description: "test" } },
+      { tool: "Task", sessionID: subagentSid, args: { subagent_type: "explorer", description: "test" } },
       output,
     );
-    expect(output.block).toBe(true);
-    expect(output.reason).toContain("Subagents cannot use");
+    expect(output.block).toBeUndefined();
+    // Should register a pending spawn since Task is now allowed for subagents
+    const pending = _pendingSubagentSpawnsForTest.get(subagentSid);
+    expect(pending).toBeDefined();
+    expect(pending!.length).toBeGreaterThanOrEqual(1);
+    // Clean up
+    _pendingSubagentSpawnsForTest.delete(subagentSid);
   });
 
-  it("blocks task tool (lowercase) for subagent session", async () => {
+  it("allows task tool (lowercase) for subagent session", async () => {
     const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
     const output: { block?: boolean; reason?: string } = {};
     await fn(
-      { tool: "task", sessionID: subagentSid, args: { subagent_type: "explorer" } },
+      { tool: "task", sessionID: subagentSid, args: { subagent_type: "intern" } },
       output,
     );
-    expect(output.block).toBe(true);
+    expect(output.block).toBeUndefined();
+    // Clean up
+    _pendingSubagentSpawnsForTest.delete(subagentSid);
   });
 
   it("does NOT block Skill tool for subagent session", async () => {
@@ -376,14 +389,22 @@ describe("subagent Task tool blocking", () => {
     expect(output.block).toBeUndefined();
   });
 
-  it("blocked Task call returns helpful message mentioning Skill as alternative", async () => {
+  it("Task from subagent session registers pending spawn for sub-subagent detection", async () => {
     const fn = hooks["tool.execute.before"] as (i: unknown, o: unknown) => Promise<void>;
     const output: { block?: boolean; reason?: string } = {};
     await fn(
-      { tool: "Task", sessionID: subagentSid, args: { subagent_type: "thinker" } },
+      { tool: "Task", sessionID: subagentSid, args: { subagent_type: "explorer" } },
       output,
     );
-    expect(output.reason).toContain("Skill tool");
+    // Task is now allowed for subagents — no block
+    expect(output.block).toBeUndefined();
+    // Pending spawn should be registered for sub-subagent tracking
+    const pending = _pendingSubagentSpawnsForTest.get(subagentSid);
+    expect(pending).toBeDefined();
+    expect(pending!.length).toBeGreaterThanOrEqual(1);
+    expect(pending![0].subagentType).toBe("explorer");
+    // Clean up
+    _pendingSubagentSpawnsForTest.delete(subagentSid);
   });
 
   it("does NOT block Task tool for primary (non-subagent) session", async () => {
@@ -499,6 +520,8 @@ describe("Task-call timing registry — subagent detection", () => {
   });
 
   it("pending spawn entry is consumed after matching", async () => {
+    // Clean up any stale state first
+    _pendingSubagentSpawnsForTest.delete("primary-timing-abc");
     // Fire Task from primary session to queue a pending spawn
     await toolBeforeFn()(
       { tool: "Task", sessionID: "primary-timing-abc", args: { subagent_type: "engineer" } },
@@ -517,18 +540,19 @@ describe("Task-call timing registry — subagent detection", () => {
     expect(isEmpty).toBe(true);
   });
 
-  it("Task from subagent session does NOT register pending spawn", async () => {
-    const subSid = "test-subagent-no-pending-spawn";
+  it("Task from subagent session DOES register pending spawn (for sub-subagent detection)", async () => {
+    const subSid = "test-subagent-pending-spawn";
     _subagentSessionsForTest.add(subSid);
     try {
       await toolBeforeFn()(
-        { tool: "Task", sessionID: subSid, args: { subagent_type: "engineer" } },
+        { tool: "Task", sessionID: subSid, args: { subagent_type: "explorer" } },
         {},
       );
-      // Subagent Task calls are blocked — no pending spawn should be queued
+      // Subagent Task calls now register pending spawns for sub-subagent tracking
       const pending = _pendingSubagentSpawnsForTest.get(subSid);
-      const isEmpty = pending === undefined || pending.length === 0;
-      expect(isEmpty).toBe(true);
+      expect(pending).toBeDefined();
+      expect(pending!.length).toBe(1);
+      expect(pending![0].subagentType).toBe("explorer");
     } finally {
       _subagentSessionsForTest.delete(subSid);
       _pendingSubagentSpawnsForTest.delete(subSid);

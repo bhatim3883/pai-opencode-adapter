@@ -280,9 +280,10 @@ describe("subagent preamble", () => {
     expect(preamble).toContain("subagent");
   });
 
-  test("preamble prohibits Task tool usage", () => {
+  test("preamble allows Task tool for leaf agents", () => {
     const preamble = getSubagentPreamble();
-    expect(preamble).toContain("DO NOT use the Task tool");
+    expect(preamble).toContain("You CAN use the Task tool");
+    expect(preamble).not.toContain("DO NOT use the Task tool");
   });
 
   test("preamble allows Skill tool usage", () => {
@@ -296,14 +297,10 @@ describe("subagent preamble", () => {
     expect(preamble).toContain("voice curl");
   });
 
-  test("preamble instructs direct work with available tools including Skill", () => {
+  test("preamble mentions Skill tool and delegation guidelines", () => {
     const preamble = getSubagentPreamble();
-    expect(preamble).toContain("Read");
-    expect(preamble).toContain("Write");
-    expect(preamble).toContain("Edit");
-    expect(preamble).toContain("Bash");
-    expect(preamble).toContain("Grep");
-    expect(preamble).toContain("Glob");
-    expect(preamble).toContain("Skill");
+    expect(preamble).toContain("Skill tool");
+    expect(preamble).toContain("Delegation Guidelines");
+    expect(preamble).toContain("leaf agents");
   });
 });

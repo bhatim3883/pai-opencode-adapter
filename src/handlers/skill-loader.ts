@@ -16,6 +16,11 @@ import { homedir } from "node:os";
 import { z } from "zod";
 import { tool } from "@opencode-ai/plugin";
 import { fileLog } from "../lib/file-logger.js";
+import {
+  isRegisteredSubagent,
+  getSubagentType,
+  formatPermissionSummary,
+} from "../lib/agent-type-registry.js";
 
 // Base directory for all PAI skills
 const SKILLS_BASE_DIR = join(homedir(), ".claude", "skills");
@@ -236,6 +241,34 @@ export function listSkills(): string {
   return `Available PAI Skills:\n${lines.join("\n")}`;
 }
 
+// ── Subagent Permission Context ───────────────────────────────────────────
+
+/**
+ * If the requesting session is a known subagent, append permission
+ * adaptation context after the skill content. This helps the subagent
+ * understand which instructions it can execute and which need adaptation.
+ *
+ * Returns the original content unchanged for non-subagent sessions.
+ */
+function maybeAppendPermissionContext(
+  content: string,
+  isSubagent: boolean,
+  agentType: string | null,
+  skillName: string,
+): string {
+  if (!isSubagent || !agentType) return content;
+
+  const summary = formatPermissionSummary(agentType);
+  if (!summary) return content;
+
+  fileLog(
+    `[skill-loader] Appending permission context for ${agentType} agent loading skill "${skillName}"`,
+    "info",
+  );
+
+  return `${content}\n\n---\n\n${summary}`;
+}
+
 // ── Tool Definition ───────────────────────────────────────────────────────────
 
 /**
@@ -260,7 +293,7 @@ Skills provide step-by-step instructions, workflows, and patterns for specialize
         "Optional workflow file name within the skill's Workflows/ directory (without .md extension)."
       ),
     },
-    async execute({ name, workflow }) {
+    async execute({ name, workflow }, ctx) {
       // ── Security gate ──────────────────────────────────────────────────────
       if (name && hasDotDot(name)) {
         fileLog(`[skill-loader] Path traversal attempt blocked: name="${name}"`, "warn");
@@ -270,6 +303,13 @@ Skills provide step-by-step instructions, workflows, and patterns for specialize
         fileLog(`[skill-loader] Path traversal attempt blocked: workflow="${workflow}"`, "warn");
         return "Error: Invalid skill name — path traversal not allowed";
       }
+
+      // ── Subagent detection ─────────────────────────────────────────────────
+      // Determine if this request comes from a subagent session.
+      // If so, we'll append permission adaptation context after the skill content.
+      const sessionId = ctx?.sessionID ?? "";
+      const isSubagent = sessionId ? isRegisteredSubagent(sessionId) : false;
+      const agentType = isSubagent ? getSubagentType(sessionId) : null;
 
       // ── List mode ──────────────────────────────────────────────────────────
       if (!name || name.trim() === "" || name.toLowerCase() === "list") {
@@ -293,7 +333,7 @@ Skills provide step-by-step instructions, workflows, and patterns for specialize
             `[skill-loader] Loaded workflow: skill="${name}" workflow="${workflow}"`,
             "info",
           );
-          return content;
+          return maybeAppendPermissionContext(content, isSubagent, agentType, name);
         } catch (err) {
           fileLog(`[skill-loader] Failed to read workflow file: ${err}`, "warn");
           return `Error: Workflow "${workflow}" not found for skill "${name}". Use skill("${name}") to see available workflows.`;
@@ -310,7 +350,7 @@ Skills provide step-by-step instructions, workflows, and patterns for specialize
       try {
         const content = readFileSync(skillPath, "utf-8");
         fileLog(`[skill-loader] Loaded skill: "${name}" from ${skillPath}`, "info");
-        return content;
+        return maybeAppendPermissionContext(content, isSubagent, agentType, name);
       } catch (err) {
         fileLog(`[skill-loader] Failed to read skill file: ${err}`, "warn");
         return `Error: Skill '${name}' not found. Use skill("list") to see available skills.`;

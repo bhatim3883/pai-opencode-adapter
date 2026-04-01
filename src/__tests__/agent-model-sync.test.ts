@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 // We test the internal functions by importing them
-import { syncAgentModels, AGENT_ROLE_MAP } from "../lib/agent-model-sync.js";
+import { syncAgentModels, AGENT_ROLE_MAP, watchConfigAndSync } from "../lib/agent-model-sync.js";
 
 // ── AGENT_ROLE_MAP ────────────────────────────────────────
 
@@ -169,5 +169,36 @@ describe("Integration: agent file model values", () => {
 		const content = readFileSync(join(agentsDir, "explorer.md"), "utf-8");
 		expect(content).toContain("# PAI Explorer Agent");
 		expect(content).toContain("## Capabilities");
+	});
+});
+
+// ── watchConfigAndSync ───────────────────────────────────
+
+describe("watchConfigAndSync", () => {
+	test("returns a stop function", () => {
+		const stop = watchConfigAndSync();
+		expect(typeof stop).toBe("function");
+		stop();
+	});
+
+	test("does not crash when config file exists", () => {
+		const configPath = join(
+			process.env.HOME ?? "",
+			".config",
+			"opencode",
+			"pai-adapter.json",
+		);
+		if (!existsSync(configPath)) {
+			return;
+		}
+		const stop = watchConfigAndSync();
+		expect(typeof stop).toBe("function");
+		stop();
+	});
+
+	test("calling stop multiple times does not throw", () => {
+		const stop = watchConfigAndSync();
+		stop();
+		expect(() => stop()).not.toThrow();
 	});
 });
