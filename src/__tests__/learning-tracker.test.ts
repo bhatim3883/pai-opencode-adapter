@@ -191,8 +191,8 @@ describe("toolExecuteAfterHandler", () => {
 describe("chatMessageHandler", () => {
   test("captures explicit numeric rating", async () => {
     await chatMessageHandler(
-      { sessionID: TEST_SESSION, messageID: "msg-1", message: "9 - great job" },
-      {}
+      { sessionID: TEST_SESSION, messageID: "msg-1" },
+      { message: { role: "user", content: "9 - great job" }, parts: [] }
     );
 
     const ratings = getSessionRatings(TEST_SESSION);
@@ -203,8 +203,8 @@ describe("chatMessageHandler", () => {
 
   test("captures thumbs up as rating 8", async () => {
     await chatMessageHandler(
-      { sessionID: TEST_SESSION, messageID: "msg-2", message: "👍" },
-      {}
+      { sessionID: TEST_SESSION, messageID: "msg-2" },
+      { message: { role: "user", content: "👍" }, parts: [] }
     );
 
     const ratings = getSessionRatings(TEST_SESSION);
@@ -213,8 +213,8 @@ describe("chatMessageHandler", () => {
 
   test("captures negative rating 'terrible'", async () => {
     await chatMessageHandler(
-      { sessionID: TEST_SESSION, messageID: "msg-3", message: "terrible output" },
-      {}
+      { sessionID: TEST_SESSION, messageID: "msg-3" },
+      { message: { role: "user", content: "terrible output" }, parts: [] }
     );
 
     const ratings = getSessionRatings(TEST_SESSION);
@@ -223,8 +223,8 @@ describe("chatMessageHandler", () => {
 
   test("does NOT capture rating for neutral message", async () => {
     await chatMessageHandler(
-      { sessionID: TEST_SESSION, messageID: "msg-4", message: "the weather is nice today" },
-      {}
+      { sessionID: TEST_SESSION, messageID: "msg-4" },
+      { message: { role: "user", content: "the weather is nice today" }, parts: [] }
     );
 
     const ratings = getSessionRatings(TEST_SESSION);
@@ -233,31 +233,43 @@ describe("chatMessageHandler", () => {
 
   test("captures PRD sync signal for plan: prefix", async () => {
     await chatMessageHandler(
-      { sessionID: TEST_SESSION, messageID: "msg-5", message: "plan: build auth system with JWT" },
-      {}
+      { sessionID: TEST_SESSION, messageID: "msg-5" },
+      { message: { role: "user", content: "plan: build auth system with JWT" }, parts: [] }
     );
 
     const signals = getSessionSignals(TEST_SESSION);
     expect(signals.some((s) => s.type === "prd_sync")).toBe(true);
   });
 
-  test("handles message as object with content array", async () => {
+  test("handles message content as array of text parts", async () => {
     await chatMessageHandler(
+      { sessionID: TEST_SESSION, messageID: "msg-6" },
       {
-        sessionID: TEST_SESSION,
-        messageID: "msg-6",
-        message: { content: [{ type: "text", text: "8 - looks good" }] },
-      },
-      {}
+        message: { role: "user", content: [{ type: "text", text: "8 - looks good" }] },
+        parts: [],
+      }
     );
 
     const ratings = getSessionRatings(TEST_SESSION);
     expect(ratings.some((r) => r.rating === 8)).toBe(true);
   });
 
-  test("does not throw on empty message", async () => {
+  test("falls back to output.parts when message.content is absent", async () => {
+    await chatMessageHandler(
+      { sessionID: TEST_SESSION, messageID: "msg-7" },
+      {
+        message: { role: "user" },
+        parts: [{ type: "text", text: "9 - nice via parts" }],
+      }
+    );
+
+    const ratings = getSessionRatings(TEST_SESSION);
+    expect(ratings.some((r) => r.rating === 9)).toBe(true);
+  });
+
+  test("does not throw on empty output", async () => {
     await expect(
-      chatMessageHandler({ sessionID: TEST_SESSION, messageID: "msg-7", message: "" }, {})
+      chatMessageHandler({ sessionID: TEST_SESSION, messageID: "msg-8" }, {})
     ).resolves.toBeUndefined();
   });
 });

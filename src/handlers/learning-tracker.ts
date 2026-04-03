@@ -359,29 +359,42 @@ export async function toolExecuteAfterHandler(
 /**
  * chat.message handler — explicit rating extraction + PRD sync detection.
  * Schicht 2: fire-and-forget, never blocks.
+ *
+ * Real SDK signature: message and parts are in `output`, NOT in `input`.
+ *   input:  { sessionID, agent?, model?, messageID?, variant? }
+ *   output: { message: UserMessage, parts: Part[] }
  */
 export async function chatMessageHandler(
-  input: { sessionID?: string; messageID?: string; message?: unknown },
-  _output: unknown
+  input: { sessionID?: string; messageID?: string },
+  output: {
+    message?: { role?: string; content?: string | Array<{ type?: string; text?: string }> };
+    parts?: Array<{ type?: string; text?: string }>;
+  }
 ): Promise<void> {
   try {
     const sessionId = input.sessionID ?? "unknown";
     const state = getOrCreateState(sessionId);
 
-    // Extract message text
+    // Extract message text from output.message (real SDK: message is in output, not input)
+    const msg = output.message;
     let messageText = "";
-    if (typeof input.message === "string") {
-      messageText = input.message;
-    } else if (input.message && typeof input.message === "object") {
-      const msg = input.message as Record<string, unknown>;
-      if (typeof msg["content"] === "string") {
-        messageText = msg["content"];
-      } else if (Array.isArray(msg["content"])) {
-        messageText = (msg["content"] as Array<{ type?: string; text?: string }>)
+    if (msg) {
+      if (typeof msg.content === "string") {
+        messageText = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        messageText = (msg.content as Array<{ type?: string; text?: string }>)
           .filter((c) => c.type === "text")
           .map((c) => c.text ?? "")
           .join(" ");
       }
+    }
+
+    // Fallback: extract from output.parts if message.content is empty
+    if (!messageText && output.parts && output.parts.length > 0) {
+      messageText = output.parts
+        .filter((p) => p.type === "text")
+        .map((p) => p.text ?? "")
+        .join(" ");
     }
 
     if (!messageText) return;

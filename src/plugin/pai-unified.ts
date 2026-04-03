@@ -853,16 +853,37 @@ export const PaiPlugin = async (ctx: PluginInput) => {
     // ── chat.message ─────────────────────────────────────────
     "chat.message": async (input: Record<string, unknown>, output: Record<string, unknown>) => {
       const sid = String(input.sessionID ?? input.sessionId ?? "");
-      const content = String(
-        typeof input.message === "object" && input.message !== null
-          ? ((input.message as { content?: string }).content ?? "")
-          : String(input.message ?? ""),
-      );
 
-      // Extract role from message object or top-level input
-      const role = typeof input.message === "object" && input.message !== null
-        ? String((input.message as { role?: string }).role ?? "")
-        : String(input.role ?? "");
+      // output.message contains the UserMessage with role and content (real SDK signature).
+      // input only carries sessionID, agent, model, messageID, variant — NOT message content.
+      const message =
+        typeof output.message === "object" && output.message !== null
+          ? (output.message as { role?: string; content?: string | Array<{ type?: string; text?: string }> })
+          : null;
+      const parts = Array.isArray(output.parts)
+        ? (output.parts as Array<{ type?: string; text?: string }>)
+        : [];
+
+      // Extract text content: prefer message.content, fall back to parts
+      let content = "";
+      if (message) {
+        if (typeof message.content === "string") {
+          content = message.content;
+        } else if (Array.isArray(message.content)) {
+          content = (message.content as Array<{ type?: string; text?: string }>)
+            .filter((c) => c.type === "text")
+            .map((c) => c.text ?? "")
+            .join(" ");
+        }
+      }
+      if (!content && parts.length > 0) {
+        content = parts
+          .filter((p) => p.type === "text")
+          .map((p) => p.text ?? "")
+          .join(" ");
+      }
+
+      const role = String(message?.role ?? "");
 
       // Dedup check — skip downstream handlers if duplicate
       const dup = safeHandler("dedupCache.check", () => isDuplicate(sid, content, "chat.message"));
@@ -874,8 +895,11 @@ export const PaiPlugin = async (ctx: PluginInput) => {
       // Learning tracker
       safeHandler("learning.chatMessage", () =>
         chatMessageHandler(
-          input as { sessionID?: string; messageID?: string; message?: unknown },
-          output,
+          input as { sessionID?: string; messageID?: string },
+          output as {
+            message?: { role?: string; content?: string | Array<{ type?: string; text?: string }> };
+            parts?: Array<{ type?: string; text?: string }>;
+          },
         ),
       );
 

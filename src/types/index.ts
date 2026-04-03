@@ -263,7 +263,13 @@ export interface OpenCodePermissionOutput {
 
 export interface Hooks {
   event?: (input: { event: { type: string; [key: string]: unknown } }) => Promise<void>;
-  "chat.message"?: (input: { sessionID: string; messageID?: string }, output: unknown) => Promise<void>;
+  "chat.message"?: (
+    input: { sessionID: string; agent?: string; model?: string; messageID?: string; variant?: string },
+    output: {
+      message: { role?: string; content?: string | Array<{ type?: string; text?: string }> };
+      parts?: Array<{ type?: string; text?: string }>;
+    },
+  ) => Promise<void>;
   "permission.ask"?: (input: OpenCodePermissionInput, output: OpenCodePermissionOutput) => Promise<void>;
   "tool.execute.before"?: (input: { tool: string; sessionID: string; callID: string }, output: { args: unknown }) => Promise<void>;
   "tool.execute.after"?: (input: { tool: string; sessionID: string; callID: string; args: unknown }, output: unknown) => Promise<void>;
